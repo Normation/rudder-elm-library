@@ -1,13 +1,12 @@
 module RudderDataTable exposing
-    ( ApplyFilterPredicate
-    , Column
+    ( Column
     , ColumnName(..)
     , Config
     , ConfigBuilder
     , Customizations
     , Effect(..)
-    , Filter(..)
     , FilterOptions
+    , FilterOptionsType(..)
     , Model
       -- the internal message type, we never want to expose it with Msg(..)
     , Msg
@@ -24,9 +23,7 @@ module RudderDataTable exposing
     , defaultCustomizations
     , defaultOptions
       -- for testing the updates
-    , filterByValues
-    , getFilterTextValue
-    , getFilterValue
+    , getFilterOptionValue
     , getRows
     , getSort
     , init
@@ -36,11 +33,11 @@ module RudderDataTable exposing
     , update
     , updateData
     , updateFilter
-    , updateSubstringFilter
     , updateWithEffect
     , view
     )
 
+import Filters exposing (FilterStringPredicate, Predicate, SearchFilterState, apply, getTextValue, stringPredicate, substring)
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onInput)
@@ -86,22 +83,8 @@ type alias Config row msg =
     { columns : NonEmptyList.Nonempty (Column row msg)
     , sortBy : ColumnName
     , sortOrder : SortOrder
-    , filter : Filter
-    , applyFilter : ApplyFilterPredicate row
     , options : Options row msg
     }
-
-
-{-| The filter types. It has an option to display it in the table header, but is always available in the table model.
-See <https://datatables.net/reference/type/DataTables.SearchOptions> for other possible filters to implement.
-
-The filter can be empty (e.g. when the input is empty, which can be the default), so invariants should enforce the
-EmptyFilter case
-
--}
-type Filter
-    = Substring (NonEmptyList.Nonempty Char)
-    | EmptyFilter
 
 
 type RefreshButtonOptions msg
@@ -109,9 +92,20 @@ type RefreshButtonOptions msg
     | RefreshButtonOptions (List (Attribute (Msg msg)))
 
 
-type FilterOptions msg
+{-| The option to include an search input filter in the table header, or filter with arbitrary HTML in the table header,
+or to use filters that are external to the table.
+
+SearchInputFilter provides functionality to save to localStorage, so use it along the storage options if needed.
+
+-}
+type FilterOptions row msg
     = NoFilter
-    | FilterHeaderOptions (List (Attribute (Msg msg)))
+    | FilterOptions (FilterOptionsType row msg)
+
+
+type FilterOptionsType row msg
+    = HtmlFilter { predicate : Predicate row, html : Html msg, toMsg : msg -> Msg msg }
+    | SearchInputFilter { predicate : FilterStringPredicate row, state : SearchFilterState }
 
 
 type alias StorageOptionsConfig msg =
@@ -144,7 +138,7 @@ type alias Options row msg =
     { customizations : Customizations row msg
     , refresh : RefreshButtonOptions msg
     , storage : StorageOptions msg
-    , filter : FilterOptions msg
+    , filter : FilterOptions row msg
     }
 
 
@@ -154,16 +148,10 @@ init config data =
         { columns = config.columns
         , sortBy = config.sortBy
         , sortOrder = config.sortOrder
-        , filter = config.filter
-        , applyFilter = config.applyFilter
         , options = config.options
         , initialData = data
         , data = data
         }
-
-
-type alias ApplyFilterPredicate row =
-    (String -> Bool) -> row -> Bool
 
 
 type Model row msg
@@ -171,8 +159,6 @@ type Model row msg
         { columns : NonEmptyList.Nonempty (Column row msg)
         , sortBy : ColumnName
         , sortOrder : SortOrder
-        , filter : Filter
-        , applyFilter : ApplyFilterPredicate row
         , options : Options row msg
         , data : List row
 
@@ -186,9 +172,10 @@ passed in the configuration
 -}
 type Msg parentMsg
     = SortColumn ColumnName
-    | FilterInputChanged String
     | RefreshMsg
-    | UpdateFilterMsg Filter
+    | FilterMsg
+    | FilterInputChanged String
+    | UpdateFilterMsg SearchFilterState
     | ParentMsg parentMsg
 
 
@@ -196,13 +183,14 @@ type Msg parentMsg
 -}
 type OutMsg parentMsg
     = Refresh
+    | Filter
     | OnHtml parentMsg
 
 
 {-| A representation of concrete effects in the type system to allow testing
 -}
 type Effect parentMsg
-    = SaveFilterInLocalStorage StorageKey Filter (Value -> Cmd parentMsg)
+    = SaveFilterInLocalStorage StorageKey SearchFilterState (Value -> Cmd parentMsg)
 
 
 
@@ -230,19 +218,19 @@ To use it, the builder DSL heavily uses the flow syntax, take this example :
         buildConfig.newConfig cols filterByFields
             |> buildConfig.withSortBy (ColumnName "id")
             |> buildConfig.withSortOrder Desc
-            |> buildConfig.withFilter (Substring (NonEmptyList.Nonempty 'i' [ 'd', '0' ]))
             |> buildConfig.withOptions
                 (buildOptions.newOptions
                     |> buildOptions.withRefresh [ class "btn btn-primary" ]
-                    |> buildOptions.withFilter [ class "input-group" ]
+                    |> buildOptions.withFilter filterByFields (Substring (NonEmptyList.Nonempty 'i' [ 'd', '0' ])) [ class "input-group" ]
                 )
+
+@deprecated newConfig : use newColumnsConfig, and add filters using the withSearchFilter options
 
 -}
 type alias ConfigBuilder row msg =
-    { newConfig : NonEmptyList.Nonempty (Column row msg) -> ApplyFilterPredicate row -> Config row msg
+    { newConfig : NonEmptyList.Nonempty (Column row msg) -> Config row msg
     , withSortBy : ColumnName -> Config row msg -> Config row msg
     , withSortOrder : SortOrder -> Config row msg -> Config row msg
-    , withFilter : Filter -> Config row msg -> Config row msg
     , withOptions : Options row msg -> Config row msg -> Config row msg
     }
 
@@ -251,7 +239,7 @@ type alias OptionsBuilder row msg =
     { newOptions : Options row msg
     , withRefresh : List (Attribute (Msg msg)) -> Options row msg -> Options row msg
     , withStorage : StorageOptionsConfig msg -> Options row msg -> Options row msg
-    , withFilter : List (Attribute (Msg msg)) -> Options row msg -> Options row msg
+    , withFilter : FilterOptionsType row msg -> Options row msg -> Options row msg
     }
 
 
@@ -260,7 +248,6 @@ buildConfig =
     { newConfig = defaultConfig
     , withSortBy = \value -> \state -> { state | sortBy = value }
     , withSortOrder = \value -> \state -> { state | sortOrder = value }
-    , withFilter = \value -> \state -> { state | filter = value }
     , withOptions = \value -> \state -> { state | options = value }
     }
 
@@ -270,7 +257,7 @@ buildOptions =
     { newOptions = defaultOptions
     , withRefresh = \opt -> \state -> { state | refresh = RefreshButtonOptions opt }
     , withStorage = \opt -> \state -> { state | storage = StorageOptions opt }
-    , withFilter = \opt -> \state -> { state | filter = FilterHeaderOptions opt }
+    , withFilter = \opt -> \state -> { state | filter = FilterOptions opt }
     }
 
 
@@ -278,13 +265,11 @@ buildOptions =
 -- defaults
 
 
-defaultConfig : NonEmptyList.Nonempty (Column row msg) -> ApplyFilterPredicate row -> Config row msg
-defaultConfig columns applyFilter =
+defaultConfig : NonEmptyList.Nonempty (Column row msg) -> Config row msg
+defaultConfig columns =
     { columns = columns
-    , applyFilter = applyFilter
     , sortBy = NonEmptyList.head columns |> .name
     , sortOrder = Asc
-    , filter = EmptyFilter
     , options = defaultOptions
     }
 
@@ -327,11 +312,6 @@ storageOptions (Model model) =
             Nothing
 
 
-getFilterValue : Model row msg -> String
-getFilterValue (Model { filter }) =
-    getFilterTextValue filter
-
-
 getSort : Model row msg -> ( ColumnName, SortOrder )
 getSort (Model { sortBy, sortOrder }) =
     ( sortBy, sortOrder )
@@ -345,16 +325,6 @@ getRows (Model { data }) =
 size : Model row msg -> Int
 size (Model { data }) =
     List.length data
-
-
-getFilterTextValue : Filter -> String
-getFilterTextValue filter =
-    case filter of
-        Substring filterString ->
-            String.fromList (NonEmptyList.toList filterString)
-
-        EmptyFilter ->
-            ""
 
 
 
@@ -394,78 +364,122 @@ updateWithEffect msg (Model model) =
             -- TODO: Sorting effect : save in local storage
             ( Model model |> sortByColumnName columnName, [], Nothing )
 
-        FilterInputChanged filter ->
-            --TODO: this does not work, data is reset when filter is applied
-            updateWithEffect (updateSubstringFilter filter) (Model model)
-
         RefreshMsg ->
-            -- FIXME: disable button
+            -- TODO: disable button
             ( Model model, [], Just Refresh )
 
-        UpdateFilterMsg filter ->
-            -- TODO: proper setter with invariants
-            let
-                effects =
-                    case model.options.storage of
-                        StorageOptions options ->
-                            [ SaveFilterInLocalStorage options.key filter options.saveToLocalStoragePort ]
+        -- FilterMsg ->
+        --     -- FIXME: filter model, update invariants
+        --     let
+        --         effects =
+        --             case model.options.storage of
+        --                 StorageOptions options ->
+        --                     [ SaveFilterInLocalStorage options.key options.saveToLocalStoragePort ]
+        --                 NoStorage ->
+        --                     []
+        --     in
+        --     ( Model
+        --         { model
+        --             -- FIXME: call filter "model update"
+        --             , data = List.filter (model.applyFilter (createPredicate filter)) model.initialData
+        --         }
+        --     , effects
+        --     , Nothing
+        --     )
+        FilterMsg ->
+            ( Model model, [], Just Filter )
 
-                        NoStorage ->
-                            []
+        FilterInputChanged s ->
+            updateWithEffect (UpdateFilterMsg (substring s)) (Model model)
+
+        UpdateFilterMsg s ->
+            let
+                ( newModel, effects ) =
+                    updateOnFilterInput s (Model model)
             in
-            ( Model
-                { model
-                    | filter = filter
-                    , data = List.filter (model.applyFilter (createPredicate filter)) model.initialData
-                }
-            , effects
-            , Nothing
-            )
+            ( newModel, effects, Nothing )
 
         ParentMsg m ->
             -- FIXME: do we know the effects ?
             ( Model model, [], Just (OnHtml m) )
 
 
-{-| The internal predicate : it always trims and use the lowercase filter
--}
-createPredicate : Filter -> (String -> Bool)
-createPredicate filter =
-    case filter of
-        Substring _ ->
-            String.toLower >> String.contains (getFilterTextValue filter |> String.toLower |> String.trim)
-
-        EmptyFilter ->
-            \_ -> True
-
-
-
--- public utils
-
-
-{-| A filter where a|b allows to match a row with two consecutive columns with the values `a` and `b`.
--}
-filterByValues : (row -> List String) -> ApplyFilterPredicate row
-filterByValues rowToValues =
-    \p r -> r |> rowToValues |> String.join "|" |> String.toLower |> p
-
-
-
--- message constructors
-
-
-updateFilter : Filter -> Msg parentMsg
+updateFilter : SearchFilterState -> Msg msg
 updateFilter =
     UpdateFilterMsg
 
 
-updateSubstringFilter : String -> Msg parentMsg
-updateSubstringFilter str =
-    str
-        |> String.toList
-        |> NonEmptyList.fromList
-        |> Maybe.map (\s -> UpdateFilterMsg (Substring s))
-        |> Maybe.withDefault (UpdateFilterMsg EmptyFilter)
+updateOnFilterInput : SearchFilterState -> Model row msg -> ( Model row msg, List (Effect msg) )
+updateOnFilterInput newFilterState (Model model) =
+    let
+        (Model modelWithFilter) =
+            Model model
+                |> updateFilterOptions (setSearchInputFilterState newFilterState)
+
+        predicate =
+            getFilterOptionPredicate modelWithFilter.options.filter
+
+        newModel =
+            filterData predicate (Model modelWithFilter)
+    in
+    case model.options.storage of
+        StorageOptions options ->
+            ( newModel, [ SaveFilterInLocalStorage options.key newFilterState options.saveToLocalStoragePort ] )
+
+        NoStorage ->
+            ( newModel, [] )
+
+
+getFilterOptionValue : Model row msg -> String
+getFilterOptionValue (Model { options }) =
+    case options.filter of
+        FilterOptions (SearchInputFilter { state }) ->
+            getTextValue state
+
+        _ ->
+            ""
+
+
+getFilterOptionPredicate : FilterOptions row msg -> Predicate row
+getFilterOptionPredicate options =
+    case options of
+        NoFilter ->
+            \_ -> True
+
+        FilterOptions (HtmlFilter { predicate }) ->
+            predicate
+
+        FilterOptions (SearchInputFilter { predicate, state }) ->
+            predicate <| stringPredicate state
+
+
+filterData : (row -> Bool) -> Model row msg -> Model row msg
+filterData pred (Model model) =
+    Model { model | data = apply pred model.data }
+
+
+updateFilterOptions : (FilterOptions row msg -> FilterOptions row msg) -> Model row msg -> Model row msg
+updateFilterOptions f (Model ({ options } as model)) =
+    let
+        filter =
+            options.filter
+    in
+    Model { model | options = { options | filter = f filter } }
+
+
+setSearchInputFilterState : SearchFilterState -> FilterOptions row msg -> FilterOptions row msg
+setSearchInputFilterState state option =
+    case option of
+        FilterOptions (SearchInputFilter o) ->
+            FilterOptions (SearchInputFilter { o | state = state })
+
+        _ ->
+            option
+
+
+
+-- public utils
+-- message constructors
 
 
 sortColumn : ColumnName -> Msg parentMsg
@@ -545,9 +559,13 @@ storageValueTypeText valueType =
             "storageFilter"
 
 
-encodeFilter : Filter -> Value
+
+--FIXME: we need to enforce in the Options, that if Search && Storage are configured, how to store any kind of "filter model"
+
+
+encodeFilter : SearchFilterState -> Value
 encodeFilter filter =
-    Encode.string (getFilterTextValue filter)
+    Encode.string (getTextValue filter)
 
 
 encodeStorageValueType : StorageValueType -> Value
@@ -584,12 +602,12 @@ view (Model ({ columns, data, options } as model)) =
 
         tableView =
             table [ class "no-footer dataTable" ]
-                [ thead theadAttrs [ tableHeader options.refresh columns model ]
+                [ thead theadAttrs [ tableHeader columns model ]
                 , tbody tbodyAttrs (tableBody columns data)
                 ]
 
         content =
-            case viewHeaderOptions model.filter model.options of
+            case viewHeaderOptions model.options of
                 [] ->
                     [ tableView ]
 
@@ -601,33 +619,41 @@ view (Model ({ columns, data, options } as model)) =
     div tableContainerAttrs content
 
 
-viewHeaderOptions : Filter -> Options row msg -> List (Html (Msg msg))
-viewHeaderOptions currentFilter { filter, refresh } =
+viewHeaderOptions : Options row msg -> List (Html (Msg msg))
+viewHeaderOptions { filter, refresh } =
     case ( filter, refresh ) of
         ( NoFilter, NoRefreshButton ) ->
             []
 
-        ( FilterHeaderOptions filterAttrs, NoRefreshButton ) ->
-            [ input ([ class "form-control", type_ "text", placeholder "Filter...", onInput FilterInputChanged, value (getFilterTextValue currentFilter) ] ++ filterAttrs) []
-            ]
-
-        ( FilterHeaderOptions filterAttrs, RefreshButtonOptions refreshAttrs ) ->
-            [ input ([ class "form-control", type_ "text", placeholder "Filter...", onInput FilterInputChanged, value (getFilterTextValue currentFilter) ] ++ filterAttrs) []
-
-            -- TODO : when there are export options, it should be a group of buttons at the end
-            , button refreshAttrs [ i [ class "fa fa-refresh" ] [] ]
-            ]
-
-        ( NoFilter, RefreshButtonOptions refreshAttrs ) ->
+        ( NoFilter, (RefreshButtonOptions _) as option ) ->
             --TODO: should the buttons still be aligned at the end ?
-            [ div [ class "ms-auto me-0" ]
-                [ button refreshAttrs [ i [ class "fa fa-refresh" ] [] ]
-                ]
+            [ div [ class "ms-auto me-0" ] (viewRefreshButton option)
             ]
 
+        -- FIXME: when there are export options, it should be a group of buttons at the end
+        ( FilterOptions (SearchInputFilter { state }), refreshOptions ) ->
+            [ input [ class "form-control", type_ "text", placeholder "Filter...", onInput FilterInputChanged, value (getTextValue state) ] []
+            ]
+                ++ viewRefreshButton refreshOptions
 
-tableHeader : RefreshButtonOptions msg -> NonEmptyList.Nonempty (Column row msg) -> Sort a -> Html (Msg msg)
-tableHeader refreshOptions columns sort =
+        ( FilterOptions (HtmlFilter { html, toMsg }), refreshOptions ) ->
+            [ Html.map toMsg html
+            ]
+                ++ viewRefreshButton refreshOptions
+
+
+viewRefreshButton : RefreshButtonOptions msg -> List (Html (Msg msg))
+viewRefreshButton option =
+    case option of
+        NoRefreshButton ->
+            []
+
+        RefreshButtonOptions attrs ->
+            [ button attrs [ i [ class "fa fa-refresh" ] [] ] ]
+
+
+tableHeader : NonEmptyList.Nonempty (Column row msg) -> Sort a -> Html (Msg msg)
+tableHeader columns sort =
     tr [ class "head" ]
         (columns
             |> NonEmptyList.toList
@@ -674,4 +700,4 @@ tableBody columns data =
         List.map rowTable data
 
     else
-        [ tr [] [ td [ class "empty", colspan 5 ] [ i [ class "fa fa-exclamation-triangle" ] [], text "No nodes match your filters." ] ] ]
+        [ tr [] [ td [ class "empty", colspan 5 ] [ i [ class "fa fa-exclamation-triangle" ] [], text "Nothing matches your filters." ] ] ]

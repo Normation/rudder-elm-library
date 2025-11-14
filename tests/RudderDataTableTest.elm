@@ -1,6 +1,7 @@
 module RudderDataTableTest exposing (suite)
 
 import Expect
+import Filters exposing (SearchFilterState(..), byValues, getTextValue)
 import Fuzz exposing (..)
 import Html
 import List.Nonempty as NonEmptyList
@@ -13,12 +14,12 @@ type alias Model =
     RudderDataTable.Model String ()
 
 
-filterFuzz : Fuzzer Filter
+filterFuzz : Fuzzer SearchFilterState
 filterFuzz =
     oneOf [ constant EmptyFilter, substringFilterFuzz ]
 
 
-substringFilterFuzz : Fuzzer Filter
+substringFilterFuzz : Fuzzer SearchFilterState
 substringFilterFuzz =
     -- Filter without space, because filter is trimmed
     map Substring (nonEmptyListFuzzer (intRange 33 126 |> map Char.fromCode))
@@ -48,12 +49,16 @@ sortOrderFuzz =
     oneOfValues [ Asc, Desc ]
 
 
-optionsFuzz : Fuzzer (Options String ())
-optionsFuzz =
-    constant (buildOptions.newOptions |> buildOptions.withStorage { key = "", saveToLocalStoragePort = \_ -> Cmd.none })
+optionsFuzz : SearchFilterState -> Fuzzer (Options String ())
+optionsFuzz filter =
+    constant
+        (buildOptions.newOptions
+            |> buildOptions.withStorage { key = "", saveToLocalStoragePort = \_ -> Cmd.none }
+            |> buildOptions.withFilter (SearchInputFilter { predicate = byValues (\d -> [ d ]), state = filter })
+        )
 
 
-filterModelFuzz : Filter -> Fuzzer Model
+filterModelFuzz : SearchFilterState -> Fuzzer Model
 filterModelFuzz filter =
     let
         config =
@@ -61,9 +66,7 @@ filterModelFuzz filter =
                 |> andMap (nonEmptyListFuzzer columnFuzz)
                 |> andMap columnNameFuzz
                 |> andMap sortOrderFuzz
-                |> andMap (constant filter)
-                |> andMap applyFilterFuzz
-                |> andMap optionsFuzz
+                |> andMap (optionsFuzz filter)
     in
     map2 RudderDataTable.init config dataFuzzer
 
@@ -76,9 +79,7 @@ sortModelFuzz sortBy sortOrder =
                 |> andMap (constant (NonEmptyList.singleton { name = sortBy, renderHtml = \_ -> Html.text "", renderCsv = Nothing, ordering = Ordering.natural }))
                 |> andMap (constant sortBy)
                 |> andMap (constant sortOrder)
-                |> andMap (constant EmptyFilter)
-                |> andMap applyFilterFuzz
-                |> andMap optionsFuzz
+                |> andMap (optionsFuzz EmptyFilter)
     in
     map2 RudderDataTable.init config dataFuzzer
 
@@ -127,7 +128,7 @@ suite =
                 in
                 updateWithEffect (updateFilter stubFilter) m |> effect |> expectation
         , fuzz (filterModelFuzz EmptyFilter) "save new filter in model" <|
-            \m -> updateWithEffect (updateFilter stubFilter) m |> (model >> getFilterValue) |> Expect.equal "test"
+            \m -> updateWithEffect (updateFilter stubFilter) m |> (model >> getFilterOptionValue) |> Expect.equal "test"
         , fuzz3 (filterModelFuzz EmptyFilter) dataFuzzer substringFilterFuzz "apply substring filter to data" <|
             \m d f ->
                 let
@@ -135,7 +136,7 @@ suite =
                         List.length d
 
                     filterText =
-                        getFilterTextValue f
+                        getTextValue f
 
                     -- each data contains the filter string so filtered data is the same
                     data =
