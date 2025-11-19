@@ -1,7 +1,7 @@
-module RudderDataTableTest exposing (suite)
+module RudderDataTableTest exposing (..)
 
 import Expect
-import Filters exposing (SearchFilterState(..), byValues, getTextValue)
+import Filters exposing (SearchFilterState, byValues, getTextValue)
 import Fuzz exposing (..)
 import Html
 import List.Nonempty as NonEmptyList
@@ -16,13 +16,13 @@ type alias Model =
 
 filterFuzz : Fuzzer SearchFilterState
 filterFuzz =
-    oneOf [ constant EmptyFilter, substringFilterFuzz ]
+    oneOf [ constant Filters.empty, substringFilterFuzz ]
 
 
 substringFilterFuzz : Fuzzer SearchFilterState
 substringFilterFuzz =
     -- Filter without space, because filter is trimmed
-    map Substring (nonEmptyListFuzzer (intRange 33 126 |> map Char.fromCode))
+    map Filters.substring (map String.fromList (list (intRange 33 126 |> map Char.fromCode)))
 
 
 columnNameFuzz : Fuzzer ColumnName
@@ -79,7 +79,7 @@ sortModelFuzz sortBy sortOrder =
                 |> andMap (constant (NonEmptyList.singleton { name = sortBy, renderHtml = \_ -> Html.text "", renderCsv = Nothing, ordering = Ordering.natural }))
                 |> andMap (constant sortBy)
                 |> andMap (constant sortOrder)
-                |> andMap (optionsFuzz EmptyFilter)
+                |> andMap (optionsFuzz Filters.empty)
     in
     map2 RudderDataTable.init config dataFuzzer
 
@@ -99,6 +99,7 @@ rowFuzzer =
     string
 
 
+suite : Test
 suite =
     let
         model ( a, _, _ ) =
@@ -108,14 +109,14 @@ suite =
             a
 
         stubFilter =
-            Substring (NonEmptyList.Nonempty 't' (String.toList "est"))
+            Filters.substring "test"
 
         stubColumnName =
             ColumnName "column"
     in
     describe "RudderDataTable"
         [ -- filters
-          fuzz (filterModelFuzz EmptyFilter) "save new filter in local storage" <|
+          fuzz (filterModelFuzz Filters.empty) "save new filter in local storage" <|
             \m ->
                 let
                     options =
@@ -127,9 +128,9 @@ suite =
                             |> Maybe.withDefault (\_ -> Expect.fail "initial model was not configured to save to local storage, please fix the stub fuzz")
                 in
                 updateWithEffect (updateFilter stubFilter) m |> effect |> expectation
-        , fuzz (filterModelFuzz EmptyFilter) "save new filter in model" <|
-            \m -> updateWithEffect (updateFilter stubFilter) m |> (model >> getFilterOptionValue) |> Expect.equal "test"
-        , fuzz3 (filterModelFuzz EmptyFilter) dataFuzzer substringFilterFuzz "apply substring filter to data" <|
+        , fuzz (filterModelFuzz Filters.empty) "save new filter in model" <|
+            \m -> updateWithEffect (updateFilter stubFilter) m |> model |> getFilterOptionValue |> Expect.equal "test"
+        , fuzz3 (filterModelFuzz Filters.empty) dataFuzzer substringFilterFuzz "apply substring filter to data" <|
             \m d f ->
                 let
                     dataLen =
@@ -145,21 +146,24 @@ suite =
                 m
                     |> updateData data
                     |> updateWithEffect (updateFilter f)
-                    |> (model >> size)
+                    |> model
+                    |> getRows
+                    |> List.length
                     |> Expect.equal dataLen
 
         -- sort
         , fuzz (sortModelFuzz stubColumnName Asc) "toggle already sorted column with Asc" <|
-            \m -> updateWithEffect (sortColumn stubColumnName) m |> (model >> getSort) |> Expect.equal ( stubColumnName, Desc )
+            \m -> updateWithEffect (sortColumn stubColumnName) m |> model |> getSort |> Expect.equal ( stubColumnName, Desc )
         , fuzz (sortModelFuzz stubColumnName Desc) "toggle already sorted column with Desc" <|
-            \m -> updateWithEffect (sortColumn stubColumnName) m |> (model >> getSort) |> Expect.equal ( stubColumnName, Asc )
+            \m -> updateWithEffect (sortColumn stubColumnName) m |> model |> getSort |> Expect.equal ( stubColumnName, Asc )
         , fuzz2 (sortModelFuzz stubColumnName Asc) columnNameFuzz "apply column with Asc order" <|
-            \m c -> updateWithEffect (sortColumn c) m |> (model >> getSort) |> Expect.equal ( c, Asc )
+            \m c -> updateWithEffect (sortColumn c) m |> model |> getSort |> Expect.equal ( c, Asc )
         , fuzz2 (sortModelFuzz stubColumnName Asc) dataFuzzer "apply sort to data" <|
             \m data ->
                 m
                     |> updateData data
                     |> updateWithEffect (sortColumn stubColumnName)
-                    |> (model >> getRows)
+                    |> model
+                    |> getRows
                     |> Expect.equalLists (List.reverse (List.sort data))
         ]

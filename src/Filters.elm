@@ -1,16 +1,33 @@
 module Filters exposing
-    ( FilterStringPredicate
-    , Predicate
-    , SearchFilterState(..)
-    , and
-    , apply
-    , applyString
-    , byValues
+    ( SearchFilterState, empty, substring
     , getTextValue
-    , minLength
-    , stringPredicate
-    , substring
+    , FilterStringPredicate, byValues
+    , minLength, and
+    , applyString
     )
+
+{-| This module provides utility functions for common filtering logic.
+For example, filters can be applied from an user input, this module has functions to manage that.
+
+
+# Filter states
+
+@docs SearchFilterState, empty, substring
+@docs getTextValue
+
+
+# Filter predicates
+
+@docs FilterStringPredicate, byValues
+
+
+## Combinators
+
+@docs minLength, and
+
+@docs applyString
+
+-}
 
 import List.Nonempty as NonEmptyList
 
@@ -18,15 +35,11 @@ import List.Nonempty as NonEmptyList
 {-| A function that, when used with the filters utils exposed by this module,
 can be used to filter data from an input String.
 
-See `apply` for concrete usage.
+See `applyString` for concrete usage.
 
 -}
 type alias FilterStringPredicate data =
-    (String -> Bool) -> Predicate data
-
-
-type alias Predicate data =
-    data -> Bool
+    (String -> Bool) -> (data -> Bool)
 
 
 {-| The different possible states of the search component.
@@ -48,6 +61,8 @@ type SearchFilterState
 {- MAIN PUBLIC UTILS -}
 
 
+{-| Create the search filter as a Substring, the main type of filter
+-}
 substring : String -> SearchFilterState
 substring value =
     value
@@ -57,7 +72,14 @@ substring value =
         |> Maybe.withDefault EmptyFilter
 
 
-{-| Obtain a filter that is applicable to data by using stringified values from the data.
+{-| Create an empty filter
+-}
+empty : SearchFilterState
+empty =
+    EmptyFilter
+
+
+{-| Obtain a filter that is applicable to data by using stringify-ed values from the data.
 For instance with `{ id: String, name: String, description: String }`, `filterByValues ({ id, name } -> [ id, name ])`
 will skip the description field and by both `id` and `name`.
 
@@ -84,25 +106,20 @@ Filtering on list may hinder performance since Html.Keyed could be used for opti
 so consider using dictionary-based structure, or include a `String` identifier in the data.
 
 -}
-applyString : FilterStringPredicate data -> SearchFilterState -> List data -> List data
-applyString pred state =
-    apply (pred <| stringPredicate state)
+applyString : SearchFilterState -> FilterStringPredicate data -> (data -> Bool)
+applyString state pred =
+    pred <| stringPredicate state
 
 
-and : Predicate data -> Predicate data -> Predicate data
+{-| Combine result of predicate with `&&`
+-}
+and : (data -> Bool) -> (data -> Bool) -> (data -> Bool)
 and p1 p2 =
     \d -> p1 d && p2 d
 
 
-apply : Predicate data -> List data -> List data
-apply pred data =
-    List.filter pred data
-
-
-
-{- UTILS -}
-
-
+{-| Get the display value of the search filter
+-}
 getTextValue : SearchFilterState -> String
 getTextValue state =
     case state of
@@ -115,7 +132,7 @@ getTextValue state =
 
 {-| Predicate on search input filter : it always trims and use the lowercase filter
 -}
-stringPredicate : SearchFilterState -> Predicate String
+stringPredicate : SearchFilterState -> (String -> Bool)
 stringPredicate state =
     case state of
         Substring _ ->

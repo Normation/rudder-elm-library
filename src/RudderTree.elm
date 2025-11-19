@@ -1,28 +1,52 @@
-module RudderTree exposing (BranchFoldStatus(..), Model, Msg, TreeNode, TreeNodeId, ViewTree(..), init, initFlatTree, update, view)
+module RudderTree exposing
+    ( TreeNodeId, TreeNode, ViewTree(..), BranchFoldStatus(..)
+    , sortTree
+    , Model, Msg
+    , view, update, init, initFlatTree
+    )
 
-{-| A Tree component library with the "jstree" library behavior.
-It does not aim to replicate the library in Elm, and only has
-some minimalistic features. The event handling is purely based on
-the Elm architecture.
+{-| A Tree component library with the [jstree] library behavior.
+It does not aim to replicate the library in Elm, and only has some minimalistic features.
+The event handling is purely based on the Elm architecture, with the [Nested TEA][nested-tea] pattern.
+
+[jstree]: https://www.jstree.com/
+[nested-tea]: https://sporto.github.io/elm-patterns/architecture/nested-tea.html
+
+
+# Data types and constructors
+
+@docs TreeNodeId, TreeNode, ViewTree, BranchFoldStatus
+@docs sortTree
+
+
+# TEA
+
+@docs Model, Msg
+@docs view, update, init, initFlatTree
+
 -}
 
 import Dict exposing (Dict)
-import Html exposing (..)
-import Html.Attributes exposing (class, id)
+import Html exposing (Html, a, div, i, li, span, text, ul)
+import Html.Attributes exposing (class)
 import Html.Events exposing (onClick)
 import Html.Lazy
 import Ordering exposing (Ordering)
 
 
+{-| The type marker to identify a node in the tree. Identifier is very useful for event handling, and performance optimization
+-}
 type alias TreeNodeId =
     String
 
 
+{-| Representation of a node of a tree, be it a branch or a leaf
+-}
 type alias TreeNode =
     { id : TreeNodeId
     , name : String
 
-    -- , description : Maybe String  -- for hover tooltip description
+    -- , description : Maybe String  -- for hover tooltip description ?
     }
 
 
@@ -39,34 +63,29 @@ type ViewTree
     | Leaf TreeNode
 
 
+{-| State of branch : open or closed
+-}
 type BranchFoldStatus
     = Open
     | Closed
 
 
-{-| The root tree must always be Root
+{-| The model of the tree, the root tree must always be Root
+FIXME: it needs to be an opaque type then
 -}
 type alias Model =
     { rootTree : ViewTree
     }
 
 
-{-| TODO: local storage
+{-| The internal message type
 -}
 type Msg
     = ToggleBranchStatus TreeNodeId
 
 
-branchFoldStatusText : BranchFoldStatus -> String
-branchFoldStatusText status =
-    case status of
-        Open ->
-            "open"
-
-        Closed ->
-            "closed"
-
-
+{-| Initial tree without any elements
+-}
 init : Model
 init =
     { rootTree = Root []
@@ -81,6 +100,16 @@ toggle status =
 
         Closed ->
             Open
+
+
+branchFoldStatusText : BranchFoldStatus -> String
+branchFoldStatusText status =
+    case status of
+        Open ->
+            "open"
+
+        Closed ->
+            "closed"
 
 
 {-| Recursively search for the branch that needs to be toggled from root,
@@ -108,6 +137,17 @@ updateTree f ({ rootTree } as model) =
     { model | rootTree = f rootTree }
 
 
+{-| The update function to call in the parent :
+
+    RudderTreeMsg treeMsg ->
+        let
+            ( updatedModel, cmd, outMsg ) =
+                update treeMsg model.treeModel
+
+        in
+        ( { model | treeModel = updatedModel }, cmd )
+
+-}
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
@@ -116,7 +156,7 @@ update msg model =
 
 
 {-| Elements in the tree are sorted by lexicographical order by default in the tree.
-TODO: is there any reason for that ? Is it for performance, or is it historical ?
+FIXME: is there any reason for that ? Is it for performance, or is it historical ?
 -}
 viewTreeRec : ViewTree -> List (Html Msg)
 viewTreeRec tree =
@@ -130,8 +170,8 @@ viewTreeRec tree =
             ]
 
         Leaf { name } ->
-            --TODO this is where there are many possible UIs for the leaf
-            --TODO : lost onClick on child anchor
+            --FIXME this is where there are many possible UIs for the leaf
+            --FIXME : lost onClick on child anchor
             [ li [ class "jstree-node jstree-leaf" ]
                 [ i [ class "jstree-icon jstree-ocl" ] []
                 , a [ class "jstree-anchor" ]
@@ -220,6 +260,8 @@ buildFlatTree tree =
         |> List.map (\( n, sub, status ) -> Branch n (List.map Leaf sub) status)
 
 
+{-| Constructor to initialize a `Model` from a flat tree i.e with only leaves
+-}
 initFlatTree : Dict TreeNodeId ( TreeNode, List TreeNode, BranchFoldStatus ) -> Model
 initFlatTree tree =
     { rootTree = Root (buildFlatTree tree)

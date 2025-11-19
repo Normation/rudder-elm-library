@@ -1,45 +1,66 @@
 module RudderDataTable exposing
-    ( Column
-    , ColumnName(..)
-    , Config
-    , ConfigBuilder
+    ( Column, ColumnName(..), SortOrder(..)
+    , Config, ConfigBuilder, buildConfig
+    , Options, OptionsBuilder, buildOptions
+    , FilterOptions, FilterOptionsType(..)
+    , RefreshButtonOptions(..)
+    , StorageOptions, StorageOptionsConfig, StorageKey
     , Customizations
-    , Effect(..)
-    , FilterOptions
-    , FilterOptionsType(..)
-    , Model
-      -- the internal message type, we never want to expose it with Msg(..)
-    , Msg
-    , Options
-    , OptionsBuilder
+    , updateData, updateFilter, updateDataWithFilter
+    , Model, Msg
+    , view, update, init
     , OutMsg(..)
-    , RefreshButtonOptions
-    , SortOrder(..)
-    , StorageKey
-    , StorageOptions
-    , StorageOptionsConfig
-    , buildConfig
-    , buildOptions
-    , defaultCustomizations
-    , defaultOptions
-      -- for testing the updates
-    , getFilterOptionValue
-    , getRows
-    , getSort
-    , init
-    , size
+    , Effect(..), updateWithEffect
     , sortColumn
-    , storageOptions
-    , update
-    , updateData
-    , updateFilter
-    , updateWithEffect
-    , view
+    , storageOptions, getFilterOptionValue, getRows, getSort
+    -- the internal message type, we never want to expose it with Msg(..)
+    -- for testing the updates
     )
 
-import Filters exposing (FilterStringPredicate, Predicate, SearchFilterState, apply, getTextValue, stringPredicate, substring)
-import Html exposing (..)
-import Html.Attributes exposing (..)
+{-| A table component, inspired from [elm-sortable-table], with the
+functionalities taken from [DataTable].
+
+It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] architecture.
+
+[elm-sortable-table]: https://github.com/billstclair/elm-sortable-table/
+[DataTable]: https://datatables.net/
+[nested-tea]: https://sporto.github.io/elm-patterns/architecture/nested-tea.html
+
+
+# Constructors and configuration data types
+
+@docs Column, ColumnName, SortOrder
+@docs Config, ConfigBuilder, buildConfig
+@docs Options, OptionsBuilder, buildOptions
+@docs FilterOptions, FilterOptionsType
+@docs RefreshButtonOptions
+@docs StorageOptions, StorageOptionsConfig, StorageKey
+@docs Customizations
+
+
+# State-changing functions
+
+@docs updateData, updateFilter, updateDataWithFilter
+
+
+# Common TEA
+
+@docs Model, Msg
+@docs view, update, init
+@docs OutMsg
+
+
+# Testing only
+
+@docs Effect, updateWithEffect
+@docs sortColumn
+@docs storageOptions, getFilterOptionValue, getRows, getSort
+
+-}
+
+import Filters exposing (FilterStringPredicate, SearchFilterState, applyString, getTextValue, substring)
+import Html exposing (Attribute, Html, button, div, i, input, table, tbody, td, text, th, thead, tr)
+import Html.Attributes exposing (class, colspan, placeholder, rowspan, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Json.Decode exposing (Value)
 import Json.Encode as Encode
@@ -63,22 +84,33 @@ type StorageValueType
     = StorageFilter
 
 
+{-| Sorting in ascending or descending order
+-}
 type SortOrder
     = Asc
     | Desc
 
 
+{-| Type marker for the column name that is displayed
+-}
 type ColumnName
     = ColumnName String
 
 
-{-| A table column which can be rendered in multiple ways:
-by default in arbitrary HTML (with the same concrete message as in the encapsulating parent)
+{-| A table column which can be rendered in multiple ways, by default in arbitrary HTML (with the same concrete message as in the encapsulating parent).
+It can also be sorted, an enforces ordering on all columns. FIXME: it could be made optional.
+It supports rendering the table into CSV if provided. FIXME: the CSV function could be specified in the Options.
 -}
 type alias Column row msg =
-    { name : ColumnName, renderHtml : row -> Html msg, renderCsv : Maybe (row -> List String), ordering : Ordering row }
+    { name : ColumnName
+    , renderHtml : row -> Html msg
+    , renderCsv : Maybe (row -> List String)
+    , ordering : Ordering row
+    }
 
 
+{-| The options to configure the table at initialization, namely the table columns, and also including several initial defaults.
+-}
 type alias Config row msg =
     { columns : NonEmptyList.Nonempty (Column row msg)
     , sortBy : ColumnName
@@ -87,36 +119,52 @@ type alias Config row msg =
     }
 
 
+{-| The options to have a refresh button in the table or not. Refresh should be handled in parent from the Nested TEA pattern,
+see `OutMsg`
+-}
 type RefreshButtonOptions msg
     = NoRefreshButton
     | RefreshButtonOptions (List (Attribute (Msg msg)))
 
 
-{-| The option to include an search input filter in the table header, or filter with arbitrary HTML in the table header,
-or to use filters that are external to the table.
-
-SearchInputFilter provides functionality to save to localStorage, so use it along the storage options if needed.
-
+{-| The options to include a known filter in the table header, e.g. a search input filter, or to display no filter at all.
+It should still be possible to filter the table data with an exposed filtering function.
 -}
 type FilterOptions row msg
     = NoFilter
     | FilterOptions (FilterOptionsType row msg)
 
 
+{-| The filter types supported for display and/or filtering
+
+  - `SearchInputFilter` provides functionality to save to localStorage, so use it along the storage options if needed.
+  - `HtmlFilter` is arbitrary HTML in the table header
+
+-}
 type FilterOptionsType row msg
-    = HtmlFilter { predicate : Predicate row, html : Html msg, toMsg : msg -> Msg msg }
+    = HtmlFilter { predicate : row -> Bool, html : Html msg, toMsg : msg -> Msg msg }
     | SearchInputFilter { predicate : FilterStringPredicate row, state : SearchFilterState }
 
 
-type alias StorageOptionsConfig msg =
-    { key : String, saveToLocalStoragePort : Value -> Cmd msg }
-
-
+{-| The options to support saving to localStorage
+-}
 type StorageOptions msg
-    = StorageOptions (StorageOptionsConfig msg)
-    | NoStorage
+    = NoStorage
+    | StorageOptions (StorageOptionsConfig msg)
 
 
+{-| The configuration of saving to local storage, under specific key, and with the port function,
+which needs to be bound to the parent Elm app
+-}
+type alias StorageOptionsConfig msg =
+    { key : String
+    , saveToLocalStoragePort : Value -> Cmd msg
+    }
+
+
+{-| Table display customizations for adding custom HTML attributes, e.g. `class` to parts of the table.
+The defaults should be fine, but customizations can be added and defined depending on each case.
+-}
 type alias Customizations row msg =
     { tableContainerAttrs : List (Attribute (Msg msg))
 
@@ -142,6 +190,8 @@ type alias Options row msg =
     }
 
 
+{-| Init function from the config and initial data
+-}
 init : Config row msg -> List row -> Model row msg
 init config data =
     Model
@@ -154,6 +204,8 @@ init config data =
         }
 
 
+{-| The internal model of the table, which should be kept as reference in parents, to subsequent updates
+-}
 type Model row msg
     = Model
         { columns : NonEmptyList.Nonempty (Column row msg)
@@ -173,7 +225,6 @@ passed in the configuration
 type Msg parentMsg
     = SortColumn ColumnName
     | RefreshMsg
-    | FilterMsg
     | FilterInputChanged String
     | UpdateFilterMsg SearchFilterState
     | ParentMsg parentMsg
@@ -183,7 +234,6 @@ type Msg parentMsg
 -}
 type OutMsg parentMsg
     = Refresh
-    | Filter
     | OnHtml parentMsg
 
 
@@ -221,10 +271,8 @@ To use it, the builder DSL heavily uses the flow syntax, take this example :
             |> buildConfig.withOptions
                 (buildOptions.newOptions
                     |> buildOptions.withRefresh [ class "btn btn-primary" ]
-                    |> buildOptions.withFilter filterByFields (Substring (NonEmptyList.Nonempty 'i' [ 'd', '0' ])) [ class "input-group" ]
+                    |> buildOptions.withFilter (SearchInputFilter { predicate = Filters.byValues (\{ id, name } -> [ id, name ]), state = Filters.empty }) [ class "input-group" ]
                 )
-
-@deprecated newConfig : use newColumnsConfig, and add filters using the withSearchFilter options
 
 -}
 type alias ConfigBuilder row msg =
@@ -235,6 +283,8 @@ type alias ConfigBuilder row msg =
     }
 
 
+{-| The builder DSL for table options
+-}
 type alias OptionsBuilder row msg =
     { newOptions : Options row msg
     , withRefresh : List (Attribute (Msg msg)) -> Options row msg -> Options row msg
@@ -243,6 +293,8 @@ type alias OptionsBuilder row msg =
     }
 
 
+{-| Builder to obtain a table configuration
+-}
 buildConfig : ConfigBuilder row msg
 buildConfig =
     { newConfig = defaultConfig
@@ -252,6 +304,8 @@ buildConfig =
     }
 
 
+{-| Builder of the options within the `Config`
+-}
 buildOptions : OptionsBuilder row msg
 buildOptions =
     { newOptions = defaultOptions
@@ -302,6 +356,8 @@ defaultCustomizations =
 -- getters
 
 
+{-| Getter for the storage options on the model
+-}
 storageOptions : Model row msg -> Maybe (StorageOptionsConfig msg)
 storageOptions (Model model) =
     case model.options.storage of
@@ -312,31 +368,44 @@ storageOptions (Model model) =
             Nothing
 
 
+{-| Getter for the table sorting state
+-}
 getSort : Model row msg -> ( ColumnName, SortOrder )
 getSort (Model { sortBy, sortOrder }) =
     ( sortBy, sortOrder )
 
 
+{-| Getter for the table data
+-}
 getRows : Model row msg -> List row
 getRows (Model { data }) =
     data
-
-
-size : Model row msg -> Int
-size (Model { data }) =
-    List.length data
 
 
 
 -- update
 
 
+{-| Initialize from a set of data, useful in "refresh" scenario or for initialization
+-}
 updateData : List row -> Model row msg -> Model row msg
 updateData rows (Model model) =
     Model { model | initialData = rows, data = rows }
         |> applySort
 
 
+{-| The update function to call in the parent :
+
+    RudderTableMsg tableMsg ->
+        let
+            ( updatedModel, cmd, outMsg ) =
+                update tableMsg model.rudderTableModel
+
+            ...do something with public message, e.g. refresh...
+        in
+        ( { model | rudderTableModel = updatedModel }, cmd )
+
+-}
 update : Msg msg -> Model row msg -> ( Model row msg, Cmd msg, Maybe (OutMsg msg) )
 update msg model =
     let
@@ -357,37 +426,22 @@ interpret =
         >> Cmd.batch
 
 
+{-| Concrete implementation of the update loop, using the [effect] pattern.
+Would be useful for testing, not for public API.
+
+[effect]: https://sporto.github.io/elm-patterns/architecture/effects.html
+
+-}
 updateWithEffect : Msg parentMsg -> Model row parentMsg -> ( Model row parentMsg, List (Effect parentMsg), Maybe (OutMsg parentMsg) )
 updateWithEffect msg (Model model) =
     case msg of
         SortColumn columnName ->
-            -- TODO: Sorting effect : save in local storage
+            -- FIXME: Sorting effect : save in local storage
             ( Model model |> sortByColumnName columnName, [], Nothing )
 
         RefreshMsg ->
-            -- TODO: disable button
+            -- FIXME: disable button
             ( Model model, [], Just Refresh )
-
-        -- FilterMsg ->
-        --     -- FIXME: filter model, update invariants
-        --     let
-        --         effects =
-        --             case model.options.storage of
-        --                 StorageOptions options ->
-        --                     [ SaveFilterInLocalStorage options.key options.saveToLocalStoragePort ]
-        --                 NoStorage ->
-        --                     []
-        --     in
-        --     ( Model
-        --         { model
-        --             -- FIXME: call filter "model update"
-        --             , data = List.filter (model.applyFilter (createPredicate filter)) model.initialData
-        --         }
-        --     , effects
-        --     , Nothing
-        --     )
-        FilterMsg ->
-            ( Model model, [], Just Filter )
 
         FilterInputChanged s ->
             updateWithEffect (UpdateFilterMsg (substring s)) (Model model)
@@ -404,11 +458,6 @@ updateWithEffect msg (Model model) =
             ( Model model, [], Just (OnHtml m) )
 
 
-updateFilter : SearchFilterState -> Msg msg
-updateFilter =
-    UpdateFilterMsg
-
-
 updateOnFilterInput : SearchFilterState -> Model row msg -> ( Model row msg, List (Effect msg) )
 updateOnFilterInput newFilterState (Model model) =
     let
@@ -420,7 +469,7 @@ updateOnFilterInput newFilterState (Model model) =
             getFilterOptionPredicate modelWithFilter.options.filter
 
         newModel =
-            filterData predicate (Model modelWithFilter)
+            updateDataWithFilter predicate (Model modelWithFilter)
     in
     case model.options.storage of
         StorageOptions options ->
@@ -430,6 +479,8 @@ updateOnFilterInput newFilterState (Model model) =
             ( newModel, [] )
 
 
+{-| Get the text value in case the table has an input filter
+-}
 getFilterOptionValue : Model row msg -> String
 getFilterOptionValue (Model { options }) =
     case options.filter of
@@ -440,7 +491,7 @@ getFilterOptionValue (Model { options }) =
             ""
 
 
-getFilterOptionPredicate : FilterOptions row msg -> Predicate row
+getFilterOptionPredicate : FilterOptions row msg -> (row -> Bool)
 getFilterOptionPredicate options =
     case options of
         NoFilter ->
@@ -449,13 +500,16 @@ getFilterOptionPredicate options =
         FilterOptions (HtmlFilter { predicate }) ->
             predicate
 
-        FilterOptions (SearchInputFilter { predicate, state }) ->
-            predicate <| stringPredicate state
+        FilterOptions (SearchInputFilter { state, predicate }) ->
+            applyString state predicate
 
 
-filterData : (row -> Bool) -> Model row msg -> Model row msg
-filterData pred (Model model) =
-    Model { model | data = apply pred model.data }
+{-| Filter the data within the table from the outside, useful when the table filters are not configured because the
+filters are "outside" the table
+-}
+updateDataWithFilter : (row -> Bool) -> Model row msg -> Model row msg
+updateDataWithFilter pred (Model model) =
+    Model { model | data = List.filter pred model.data }
 
 
 updateFilterOptions : (FilterOptions row msg -> FilterOptions row msg) -> Model row msg -> Model row msg
@@ -478,13 +532,21 @@ setSearchInputFilterState state option =
 
 
 
--- public utils
 -- message constructors
 
 
+{-| Internal Msg to produce message to sort column, for testing
+-}
 sortColumn : ColumnName -> Msg parentMsg
 sortColumn =
     SortColumn
+
+
+{-| Internal Msg to produce message to update the search input filter, for testing
+-}
+updateFilter : SearchFilterState -> Msg msg
+updateFilter =
+    UpdateFilterMsg
 
 
 
@@ -527,21 +589,24 @@ applySort (Model model) =
 
 
 type alias Sort a =
-    { a | sortBy : ColumnName, sortOrder : SortOrder }
+    { a
+        | sortBy : ColumnName
+        , sortOrder : SortOrder
+    }
 
 
 setSortOrToggle : ColumnName -> Sort a -> Sort a
 setSortOrToggle columnName sortState =
-    let
-        toggle =
-            case sortState.sortOrder of
-                Asc ->
-                    Desc
-
-                Desc ->
-                    Asc
-    in
     if columnName == sortState.sortBy then
+        let
+            toggle =
+                case sortState.sortOrder of
+                    Asc ->
+                        Desc
+
+                    Desc ->
+                        Asc
+        in
         { sortState | sortOrder = toggle }
 
     else
@@ -588,6 +653,8 @@ encodeStorageEffect effect =
 -- Views
 
 
+{-| The main view function for the table
+-}
 view : Model row msg -> Html (Msg msg)
 view (Model ({ columns, data, options } as model)) =
     let
@@ -626,20 +693,18 @@ viewHeaderOptions { filter, refresh } =
             []
 
         ( NoFilter, (RefreshButtonOptions _) as option ) ->
-            --TODO: should the buttons still be aligned at the end ?
+            --FIXME: should the buttons still be aligned at the end ?
             [ div [ class "ms-auto me-0" ] (viewRefreshButton option)
             ]
 
         -- FIXME: when there are export options, it should be a group of buttons at the end
         ( FilterOptions (SearchInputFilter { state }), refreshOptions ) ->
-            [ input [ class "form-control", type_ "text", placeholder "Filter...", onInput FilterInputChanged, value (getTextValue state) ] []
-            ]
-                ++ viewRefreshButton refreshOptions
+            input [ class "form-control", type_ "text", placeholder "Filter...", onInput FilterInputChanged, value (getTextValue state) ] []
+                :: viewRefreshButton refreshOptions
 
         ( FilterOptions (HtmlFilter { html, toMsg }), refreshOptions ) ->
-            [ Html.map toMsg html
-            ]
-                ++ viewRefreshButton refreshOptions
+            Html.map toMsg html
+                :: viewRefreshButton refreshOptions
 
 
 viewRefreshButton : RefreshButtonOptions msg -> List (Html (Msg msg))
@@ -649,7 +714,7 @@ viewRefreshButton option =
             []
 
         RefreshButtonOptions attrs ->
-            [ button attrs [ i [ class "fa fa-refresh" ] [] ] ]
+            [ button (onClick RefreshMsg :: attrs) [ i [ class "fa fa-refresh" ] [] ] ]
 
 
 tableHeader : NonEmptyList.Nonempty (Column row msg) -> Sort a -> Html (Msg msg)
