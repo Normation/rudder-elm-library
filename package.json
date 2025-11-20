@@ -1,0 +1,18 @@
+{
+  "scripts": {
+    "build": "elm make",
+    "doc": "elm make --docs=docs.json",
+    "doc:preview": "elm-doc-preview",
+    "lint": "elm-review",
+    "format": "elm-format src/",
+    "test": "elm-test-rs",
+    "check": "elm-format --validate src/ && npm run lint"
+  },
+  "devDependencies": {
+    "elm": "^0.19.1-6",
+    "elm-doc-preview": "^6.0.1",
+    "elm-format": "^0.8.8",
+    "elm-review": "^2.13.4",
+    "elm-test-rs": "^3.0.1-0"
+  }
+}
