@@ -3,7 +3,7 @@ module RudderDataTableTest exposing (..)
 import Expect
 import Filters exposing (SearchFilterState, byValues, getTextValue)
 import Fuzz exposing (..)
-import Html
+import Html exposing (div)
 import List.Nonempty as NonEmptyList
 import Ordering
 import RudderDataTable exposing (..)
@@ -166,4 +166,24 @@ suite =
                     |> model
                     |> getRows
                     |> Expect.equalLists (List.reverse (List.sort data))
+
+        -- csv export
+        , test "test tableToCsv on empty table that does not define a renderCsv function" <|
+            \_ ->
+                init (buildConfig.newConfig (NonEmptyList.singleton (Column (ColumnName "name") (\_ -> div [] []) Nothing (\_ _ -> LT)))) []
+                    |> tableToCsv
+                    |> Expect.equal CsvExportFunctionUndefined
+        , test "test tableToCsv on empty table that defines a renderCsv function" <|
+            \_ ->
+                init (buildConfig.newConfig (NonEmptyList.singleton (Column (ColumnName "name") (\_ -> div [] []) (Just (\_ -> [])) (\_ _ -> LT)))) []
+                    |> tableToCsv
+                    |> Expect.equal (CsvExportSuccess "name\n")
+        , fuzz (nonEmptyListFuzzer columnFuzz) "test tableToCsv on empty tables that do not define a renderCsv function" <|
+            \c ->
+                init (buildConfig.newConfig c) []
+                    |> tableToCsv
+                    |> Expect.equal CsvExportFunctionUndefined
+
+        -- TODO test tableToCsv on tables that contain data and that define a renderCsv function
+        -- TODO test tableToCsv on tables that contain data and that do not define a renderCsv function
         ]

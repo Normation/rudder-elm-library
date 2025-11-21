@@ -6,6 +6,8 @@ module RudderDataTable exposing
     , RefreshButtonOptions(..)
     , StorageOptions, StorageOptionsConfig, StorageKey
     , Customizations
+    , CsvExportResult(..), tableToCsv
+    , CsvExportConfig, CsvExportOptions
     , updateData, updateFilter, updateDataWithFilter
     , Model, Msg
     , view, update, init
@@ -36,6 +38,8 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 @docs RefreshButtonOptions
 @docs StorageOptions, StorageOptionsConfig, StorageKey
 @docs Customizations
+@docs CsvExportResult, tableToCsv
+@docs CsvExportConfig, CsvExportOptions
 
 
 # State-changing functions
@@ -58,9 +62,10 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 
 -}
 
+import File.Download
 import Filters exposing (FilterStringPredicate, SearchFilterState, applyString, getTextValue, substring)
-import Html exposing (Attribute, Html, button, div, i, input, table, tbody, td, text, th, thead, tr)
-import Html.Attributes exposing (class, colspan, placeholder, rowspan, type_, value)
+import Html exposing (Attribute, Html, button, div, i, input, span, table, tbody, td, text, th, thead, tr)
+import Html.Attributes exposing (attribute, class, colspan, placeholder, rowspan, tabindex, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Json.Decode exposing (Value)
 import Json.Encode as Encode
@@ -162,6 +167,26 @@ type alias StorageOptionsConfig msg =
     }
 
 
+{-| CSV export configuration
+-}
+type alias CsvExportConfig row =
+    { fileName : String, tableToCsvFun : List row -> String }
+
+
+{-| Options for CSV export support of a given table
+-}
+type CsvExportOptions row
+    = CsvExportButton (CsvExportConfig row)
+    | NoCsvExportButton
+
+
+{-| Datatypes that represent the possible results of exporting a table to CSV
+-}
+type CsvExportResult
+    = CsvExportSuccess String
+    | CsvExportFunctionUndefined
+
+
 {-| Table display customizations for adding custom HTML attributes, e.g. `class` to parts of the table.
 The defaults should be fine, but customizations can be added and defined depending on each case.
 -}
@@ -187,6 +212,7 @@ type alias Options row msg =
     , refresh : RefreshButtonOptions msg
     , storage : StorageOptions msg
     , filter : FilterOptions row msg
+    , csvExport : CsvExportOptions row
     }
 
 
@@ -227,6 +253,7 @@ type Msg parentMsg
     | RefreshMsg
     | FilterInputChanged String
     | UpdateFilterMsg SearchFilterState
+    | ExportCsvMsg String
     | ParentMsg parentMsg
 
 
@@ -241,10 +268,11 @@ type OutMsg parentMsg
 -}
 type Effect parentMsg
     = SaveFilterInLocalStorage StorageKey SearchFilterState (Value -> Cmd parentMsg)
+    | DownloadTableAsCsv String CsvExportResult
 
 
 
--- Builders
+{- BUILDERS -}
 
 
 {-| The builder DSL for the config. It allows creating the custom configuration you want for you table :
@@ -290,6 +318,7 @@ type alias OptionsBuilder row msg =
     , withRefresh : List (Attribute (Msg msg)) -> Options row msg -> Options row msg
     , withStorage : StorageOptionsConfig msg -> Options row msg -> Options row msg
     , withFilter : FilterOptionsType row msg -> Options row msg -> Options row msg
+    , withCsvExport : CsvExportConfig row -> Options row msg -> Options row msg
     }
 
 
@@ -312,11 +341,12 @@ buildOptions =
     , withRefresh = \opt -> \state -> { state | refresh = RefreshButtonOptions opt }
     , withStorage = \opt -> \state -> { state | storage = StorageOptions opt }
     , withFilter = \opt -> \state -> { state | filter = FilterOptions opt }
+    , withCsvExport = \opt -> \state -> { state | csvExport = CsvExportButton opt }
     }
 
 
 
--- defaults
+{- DEFAULTS -}
 
 
 defaultConfig : NonEmptyList.Nonempty (Column row msg) -> Config row msg
@@ -336,6 +366,7 @@ defaultOptions =
     , refresh = NoRefreshButton
     , storage = NoStorage
     , filter = NoFilter
+    , csvExport = NoCsvExportButton
     }
 
 
@@ -353,7 +384,7 @@ defaultCustomizations =
 
 
 
--- getters
+{- GETTERS -}
 
 
 {-| Getter for the storage options on the model
@@ -383,7 +414,7 @@ getRows (Model { data }) =
 
 
 
--- update
+{- UPDATE -}
 
 
 {-| Initialize from a set of data, useful in "refresh" scenario or for initialization
@@ -422,6 +453,15 @@ interpret =
             case e of
                 SaveFilterInLocalStorage _ _ cb ->
                     cb (encodeStorageEffect e)
+
+                DownloadTableAsCsv fileName csvResult ->
+                    case csvResult of
+                        CsvExportSuccess csv ->
+                            File.Download.string fileName "text/csv" csv
+
+                        CsvExportFunctionUndefined ->
+                            -- todo display an error notification instead ?
+                            Cmd.none
         )
         >> Cmd.batch
 
@@ -452,6 +492,9 @@ updateWithEffect msg (Model model) =
                     updateOnFilterInput s (Model model)
             in
             ( newModel, effects, Nothing )
+
+        ExportCsvMsg fileName ->
+            ( Model model, [ DownloadTableAsCsv fileName (Model model |> tableToCsv) ], Nothing )
 
         ParentMsg m ->
             -- FIXME: do we know the effects ?
@@ -532,7 +575,7 @@ setSearchInputFilterState state option =
 
 
 
--- message constructors
+{- MESSAGE CONSTRUCTORS -}
 
 
 {-| Internal Msg to produce message to sort column, for testing
@@ -550,7 +593,7 @@ updateFilter =
 
 
 
--- internal helpers
+{- INTERNAL HELPERS -}
 
 
 sortByColumnName : ColumnName -> Model row msg -> Model row msg
@@ -614,7 +657,7 @@ setSortOrToggle columnName sortState =
 
 
 
--- storage and encoding
+{- STORAGE AND ENCODING -}
 
 
 storageValueTypeText : StorageValueType -> String
@@ -622,6 +665,46 @@ storageValueTypeText valueType =
     case valueType of
         StorageFilter ->
             "storageFilter"
+
+
+
+{- CSV EXPORT -}
+
+
+{-| Table to CSV export function
+-}
+tableToCsv : Model row msg -> CsvExportResult
+tableToCsv (Model model) =
+    let
+        renderCsv =
+            NonEmptyList.head model.columns
+                |> (\c -> c.renderCsv)
+    in
+    case renderCsv of
+        Just toCsv ->
+            let
+                -- first row contains column names
+                columns =
+                    model.columns
+                        |> NonEmptyList.toList
+                        |> List.map (\c -> c.name)
+                        |> List.map (\(ColumnName c) -> c)
+
+                data =
+                    model.data |> List.map toCsv
+            in
+            columns
+                :: data
+                -- todo handle special characters, see rfc reference
+                -- comma between every element of each row
+                |> List.map (\row -> List.intersperse "," row)
+                |> List.map (\row -> row |> List.foldl (\elt acc -> acc ++ elt) "")
+                -- line break after every row
+                |> List.foldl (\rowStr accStr -> accStr ++ rowStr ++ "\n") ""
+                |> CsvExportSuccess
+
+        Nothing ->
+            CsvExportFunctionUndefined
 
 
 
@@ -648,9 +731,13 @@ encodeStorageEffect effect =
                 , ( "value", encodeFilter filter )
                 ]
 
+        DownloadTableAsCsv _ _ ->
+            -- FIXME remove this case as it does not make sense
+            Debug.todo ""
 
 
--- Views
+
+{- VIEW -}
 
 
 {-| The main view function for the table
@@ -687,24 +774,31 @@ view (Model ({ columns, data, options } as model)) =
 
 
 viewHeaderOptions : Options row msg -> List (Html (Msg msg))
-viewHeaderOptions { filter, refresh } =
-    case ( filter, refresh ) of
-        ( NoFilter, NoRefreshButton ) ->
+viewHeaderOptions { filter, refresh, csvExport } =
+    case ( filter, refresh, csvExport ) of
+        ( NoFilter, NoRefreshButton, NoCsvExportButton ) ->
             []
 
-        ( NoFilter, (RefreshButtonOptions _) as option ) ->
+        ( NoFilter, (RefreshButtonOptions _) as option, _ ) ->
             --FIXME: should the buttons still be aligned at the end ?
-            [ div [ class "ms-auto me-0" ] (viewRefreshButton option)
+            [ div [ class "ms-auto me-0" ] (viewCsvExportButton csvExport ++ viewRefreshButton option)
+            ]
+
+        ( NoFilter, NoRefreshButton, _ ) ->
+            [ div [ class "ms-auto me-0" ]
+                (viewCsvExportButton
+                    csvExport
+                )
             ]
 
         -- FIXME: when there are export options, it should be a group of buttons at the end
-        ( FilterOptions (SearchInputFilter { state }), refreshOptions ) ->
+        ( FilterOptions (SearchInputFilter { state }), refreshOptions, csvOptions ) ->
             input [ class "form-control", type_ "text", placeholder "Filter...", onInput FilterInputChanged, value (getTextValue state) ] []
-                :: viewRefreshButton refreshOptions
+                :: (viewCsvExportButton csvOptions ++ viewRefreshButton refreshOptions)
 
-        ( FilterOptions (HtmlFilter { html, toMsg }), refreshOptions ) ->
+        ( FilterOptions (HtmlFilter { html, toMsg }), refreshOptions, csvOptions ) ->
             Html.map toMsg html
-                :: viewRefreshButton refreshOptions
+                :: (viewCsvExportButton csvOptions ++ viewRefreshButton refreshOptions)
 
 
 viewRefreshButton : RefreshButtonOptions msg -> List (Html (Msg msg))
@@ -715,6 +809,24 @@ viewRefreshButton option =
 
         RefreshButtonOptions attrs ->
             [ button (onClick RefreshMsg :: attrs) [ i [ class "fa fa-refresh" ] [] ] ]
+
+
+viewCsvExportButton : CsvExportOptions row -> List (Html (Msg msg))
+viewCsvExportButton option =
+    case option of
+        NoCsvExportButton ->
+            []
+
+        CsvExportButton config ->
+            [ button
+                [ class "dt-button buttons-csv buttons-html5 btn btn-primary btn-export"
+                , tabindex 0
+                , attribute "aria-controls" "logsGrid"
+                , type_ "button"
+                , onClick (ExportCsvMsg config.fileName)
+                ]
+                [ span [] [ text "Export" ] ]
+            ]
 
 
 tableHeader : NonEmptyList.Nonempty (Column row msg) -> Sort a -> Html (Msg msg)
