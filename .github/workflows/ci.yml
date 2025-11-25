@@ -1,0 +1,50 @@
+name: CI
+
+on: [ push, pull_request ]
+
+jobs:
+
+  test:
+    uses: ./.github/workflows/run-npm.yml
+    with:
+      npm-script: test
+
+  check:
+    uses: ./.github/workflows/run-npm.yml
+    with:
+      npm-script: check
+
+  build-doc:
+    uses: ./.github/workflows/run-npm.yml
+    with:
+      npm-script: doc
+
+  doc:
+    runs-on: ubuntu-latest
+    needs: [ check, build-doc ]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate elm-doc-preview
+        uses: EndBug/add-and-commit@v9
+        with:
+          add: "docs.json"
+          author_name: GitHub Actions
+          message: "Update docs.json from CI for elm-doc-preview."
+          push: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # publish:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Elm Publish
+  #       uses: dillonkearns/elm-publish-action@v1
+  #       with:
+  #         github-token: ${{ secrets.GITHUB_TOKEN }}
+  #         path-to-elm: ./node_modules/.bin/elm
+  #     - run: npm run build
+  #     - id: npm-publish
+  #       if: github.ref == 'refs/heads/main'
+  #       uses: JS-DevTools/npm-publish@v1
+  #       with:
+  #         token: ${{ secrets.NPM_TOKEN }}
