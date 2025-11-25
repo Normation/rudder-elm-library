@@ -4,7 +4,7 @@ import Expect
 import Filters exposing (SearchFilterState, byValues, getTextValue)
 import Fuzz exposing (..)
 import Html exposing (div)
-import List.Nonempty as NonEmptyList
+import List.Nonempty as NonEmptyList exposing (Nonempty)
 import Ordering
 import RudderDataTable exposing (..)
 import Test exposing (..)
@@ -35,8 +35,15 @@ columnFuzz =
     constant Column
         |> andMap columnNameFuzz
         |> andMap (constant (\_ -> Html.text ""))
-        |> andMap (constant Nothing)
         |> andMap (constant Ordering.natural)
+
+
+exportCsvColumnFuzz : Fuzzer (Column String ())
+exportCsvColumnFuzz =
+    constant Column
+        |> andMap columnNameFuzz
+        |> andMap (constant (\_ -> Html.text ""))
+        |> andMap (constant (\_ _ -> LT))
 
 
 nonEmptyListFuzzer : Fuzzer a -> Fuzzer (NonEmptyList.Nonempty a)
@@ -58,6 +65,14 @@ optionsFuzz filter =
         )
 
 
+csvOptionsFuzz : Fuzzer (Options String ())
+csvOptionsFuzz =
+    constant
+        (buildOptions.newOptions
+            |> buildOptions.withCsvExport { fileName = "myFile.txt", entryToStringList = \_ -> [] }
+        )
+
+
 filterModelFuzz : SearchFilterState -> Fuzzer Model
 filterModelFuzz filter =
     let
@@ -76,10 +91,23 @@ sortModelFuzz sortBy sortOrder =
     let
         config =
             constant Config
-                |> andMap (constant (NonEmptyList.singleton { name = sortBy, renderHtml = \_ -> Html.text "", renderCsv = Nothing, ordering = Ordering.natural }))
+                |> andMap (constant (NonEmptyList.singleton { name = sortBy, renderHtml = \_ -> Html.text "", ordering = Ordering.natural }))
                 |> andMap (constant sortBy)
                 |> andMap (constant sortOrder)
                 |> andMap (optionsFuzz Filters.empty)
+    in
+    map2 RudderDataTable.init config dataFuzzer
+
+
+exportCsvModelFuzz : Fuzzer Model
+exportCsvModelFuzz =
+    let
+        config =
+            constant Config
+                |> andMap (nonEmptyListFuzzer exportCsvColumnFuzz)
+                |> andMap columnNameFuzz
+                |> andMap sortOrderFuzz
+                |> andMap csvOptionsFuzz
     in
     map2 RudderDataTable.init config dataFuzzer
 
@@ -168,22 +196,86 @@ suite =
                     |> Expect.equalLists (List.reverse (List.sort data))
 
         -- csv export
-        , test "test tableToCsv on empty table that does not define a renderCsv function" <|
+        , test "test csv export on empty table that does not define a csv export configuration" <|
             \_ ->
-                init (buildConfig.newConfig (NonEmptyList.singleton (Column (ColumnName "name") (\_ -> div [] []) Nothing (\_ _ -> LT)))) []
-                    |> tableToCsv
-                    |> Expect.equal CsvExportFunctionUndefined
-        , test "test tableToCsv on empty table that defines a renderCsv function" <|
+                init (buildConfig.newConfig (NonEmptyList.singleton (Column (ColumnName "name") (\_ -> div [] []) (\_ _ -> LT)))) []
+                    |> updateWithEffect (exportCsv "myFile")
+                    |> effect
+                    |> Expect.equal [ DownloadTableAsCsv "myFile" CsvExportConfigUndefined ]
+        , test "test csv export on empty table that defines a csv export configuration" <|
             \_ ->
-                init (buildConfig.newConfig (NonEmptyList.singleton (Column (ColumnName "name") (\_ -> div [] []) (Just (\_ -> [])) (\_ _ -> LT)))) []
-                    |> tableToCsv
-                    |> Expect.equal (CsvExportSuccess "name\n")
-        , fuzz (nonEmptyListFuzzer columnFuzz) "test tableToCsv on empty tables that do not define a renderCsv function" <|
+                let
+                    options =
+                        buildOptions.newOptions
+                            |> buildOptions.withCsvExport { fileName = "otherFile", entryToStringList = \row -> row }
+                in
+                init
+                    (buildConfig.newConfig (NonEmptyList.singleton (Column (ColumnName "name") (\_ -> div [] []) (\_ _ -> LT)))
+                        |> buildConfig.withOptions options
+                    )
+                    []
+                    |> updateWithEffect (exportCsv "otherFile")
+                    |> effect
+                    |> Expect.equal [ DownloadTableAsCsv "otherFile" (CsvExportSuccess "") ]
+        , fuzz (nonEmptyListFuzzer columnFuzz) "test csv export on empty tables that do not define a csv export configuration" <|
             \c ->
                 init (buildConfig.newConfig c) []
-                    |> tableToCsv
-                    |> Expect.equal CsvExportFunctionUndefined
+                    |> updateWithEffect (exportCsv "yetAnotherFile")
+                    |> effect
+                    |> Expect.equal [ DownloadTableAsCsv "yetAnotherFile" CsvExportConfigUndefined ]
+        , test "test csv export on non-empty table that defines a csv export configuration" <|
+            \_ ->
+                let
+                    options =
+                        buildOptions.newOptions
+                            |> buildOptions.withCsvExport { fileName = "otherFile", entryToStringList = \{ a, b } -> [ a, String.fromInt b ] }
 
-        -- TODO test tableToCsv on tables that contain data and that define a renderCsv function
-        -- TODO test tableToCsv on tables that contain data and that do not define a renderCsv function
+                    config =
+                        buildConfig.newConfig
+                            (NonEmptyList.Nonempty
+                                (Column (ColumnName "name") (\_ -> div [] []) (\_ _ -> LT))
+                                [ Column (ColumnName "age") (\_ -> div [] []) (\_ _ -> LT) ]
+                            )
+                            |> buildConfig.withOptions options
+
+                    data =
+                        [ { a = "Alice", b = 45 }
+                        , { a = "Bob", b = 37 }
+                        ]
+
+                    tab =
+                        RudderDataTable.init config data
+                in
+                tab
+                    |> updateWithEffect (exportCsv "fileName")
+                    |> effect
+                    |> Expect.equal [ DownloadTableAsCsv "fileName" (CsvExportSuccess "name,age\u{000D}\nAlice,45\u{000D}\nBob,37") ]
+        , test "test csv export on non-empty table that defines a csv export configuration and that contains fields with special characters" <|
+            \_ ->
+                let
+                    options =
+                        buildOptions.newOptions
+                            |> buildOptions.withCsvExport { fileName = "otherFile", entryToStringList = \{ a, b } -> [ a, String.fromInt b ] }
+
+                    config =
+                        buildConfig.newConfig
+                            (NonEmptyList.Nonempty
+                                (Column (ColumnName "name") (\_ -> div [] []) (\_ _ -> LT))
+                                [ Column (ColumnName "age") (\_ -> div [] []) (\_ _ -> LT) ]
+                            )
+                            |> buildConfig.withOptions options
+
+                    data =
+                        [ { a = "\"Al\"ice\"", b = 45 }
+                        , { a = "Bo,b", b = 37 }
+                        , { a = "\nEve", b = 28 }
+                        ]
+
+                    tab =
+                        RudderDataTable.init config data
+                in
+                tab
+                    |> updateWithEffect (exportCsv "fileName")
+                    |> effect
+                    |> Expect.equal [ DownloadTableAsCsv "fileName" (CsvExportSuccess "name,age\u{000D}\n\"\"\"Al\"\"ice\"\"\",45\u{000D}\n\"Bo,b\",37\u{000D}\n\"\nEve\",28") ]
         ]

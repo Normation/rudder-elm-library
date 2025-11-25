@@ -6,8 +6,9 @@ module RudderDataTable exposing
     , RefreshButtonOptions(..)
     , StorageOptions, StorageOptionsConfig, StorageKey
     , Customizations
-    , CsvExportResult(..), tableToCsv
+    , CsvExportResult(..)
     , CsvExportConfig, CsvExportOptions
+    , exportCsv
     , updateData, updateFilter, updateDataWithFilter
     , Model, Msg
     , view, update, init
@@ -38,8 +39,9 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 @docs RefreshButtonOptions
 @docs StorageOptions, StorageOptionsConfig, StorageKey
 @docs Customizations
-@docs CsvExportResult, tableToCsv
+@docs CsvExportResult
 @docs CsvExportConfig, CsvExportOptions
+@docs exportCsv
 
 
 # State-changing functions
@@ -62,6 +64,7 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 
 -}
 
+import Csv.Encode
 import File.Download
 import Filters exposing (FilterStringPredicate, SearchFilterState, applyString, getTextValue, substring)
 import Html exposing (Attribute, Html, button, div, i, input, span, table, tbody, td, text, th, thead, tr)
@@ -104,12 +107,10 @@ type ColumnName
 
 {-| A table column which can be rendered in multiple ways, by default in arbitrary HTML (with the same concrete message as in the encapsulating parent).
 It can also be sorted, an enforces ordering on all columns. FIXME: it could be made optional.
-It supports rendering the table into CSV if provided. FIXME: the CSV function could be specified in the Options.
 -}
 type alias Column row msg =
     { name : ColumnName
     , renderHtml : row -> Html msg
-    , renderCsv : Maybe (row -> List String)
     , ordering : Ordering row
     }
 
@@ -170,7 +171,7 @@ type alias StorageOptionsConfig msg =
 {-| CSV export configuration
 -}
 type alias CsvExportConfig row =
-    { fileName : String, tableToCsvFun : List row -> String }
+    { fileName : String, entryToStringList : row -> List String }
 
 
 {-| Options for CSV export support of a given table
@@ -184,7 +185,7 @@ type CsvExportOptions row
 -}
 type CsvExportResult
     = CsvExportSuccess String
-    | CsvExportFunctionUndefined
+    | CsvExportConfigUndefined
 
 
 {-| Table display customizations for adding custom HTML attributes, e.g. `class` to parts of the table.
@@ -451,16 +452,16 @@ interpret =
     List.map
         (\e ->
             case e of
-                SaveFilterInLocalStorage _ _ cb ->
-                    cb (encodeStorageEffect e)
+                SaveFilterInLocalStorage key filter cb ->
+                    cb (encodeStorageEffect key filter)
 
                 DownloadTableAsCsv fileName csvResult ->
                     case csvResult of
                         CsvExportSuccess csv ->
                             File.Download.string fileName "text/csv" csv
 
-                        CsvExportFunctionUndefined ->
-                            -- todo display an error notification instead ?
+                        CsvExportConfigUndefined ->
+                            -- FIXME display an error notification instead ?
                             Cmd.none
         )
         >> Cmd.batch
@@ -494,7 +495,12 @@ updateWithEffect msg (Model model) =
             ( newModel, effects, Nothing )
 
         ExportCsvMsg fileName ->
-            ( Model model, [ DownloadTableAsCsv fileName (Model model |> tableToCsv) ], Nothing )
+            case model.options.csvExport of
+                CsvExportButton csvExportConfig ->
+                    ( Model model, [ DownloadTableAsCsv fileName (tableToCsv (Model model) csvExportConfig) ], Nothing )
+
+                NoCsvExportButton ->
+                    ( Model model, [ DownloadTableAsCsv fileName CsvExportConfigUndefined ], Nothing )
 
         ParentMsg m ->
             -- FIXME: do we know the effects ?
@@ -592,6 +598,13 @@ updateFilter =
     UpdateFilterMsg
 
 
+{-| Internal Msg that produces the CSV export event; used in tests
+-}
+exportCsv : String -> Msg msg
+exportCsv =
+    ExportCsvMsg
+
+
 
 {- INTERNAL HELPERS -}
 
@@ -673,38 +686,30 @@ storageValueTypeText valueType =
 
 {-| Table to CSV export function
 -}
-tableToCsv : Model row msg -> CsvExportResult
-tableToCsv (Model model) =
+tableToCsv : Model row msg -> CsvExportConfig row -> CsvExportResult
+tableToCsv (Model model) { fileName, entryToStringList } =
     let
-        renderCsv =
-            NonEmptyList.head model.columns
-                |> (\c -> c.renderCsv)
+        -- first row contains column names
+        columns : List String
+        columns =
+            model.columns
+                |> NonEmptyList.toList
+                |> List.map (\c -> c.name)
+                |> List.map (\(ColumnName c) -> c)
+
+        data : List (List String)
+        data =
+            model.data |> List.map entryToStringList
     in
-    case renderCsv of
-        Just toCsv ->
-            let
-                -- first row contains column names
-                columns =
-                    model.columns
-                        |> NonEmptyList.toList
-                        |> List.map (\c -> c.name)
-                        |> List.map (\(ColumnName c) -> c)
-
-                data =
-                    model.data |> List.map toCsv
-            in
-            columns
-                :: data
-                -- todo handle special characters, see rfc reference
-                -- comma between every element of each row
-                |> List.map (\row -> List.intersperse "," row)
-                |> List.map (\row -> row |> List.foldl (\elt acc -> acc ++ elt) "")
-                -- line break after every row
-                |> List.foldl (\rowStr accStr -> accStr ++ rowStr ++ "\n") ""
-                |> CsvExportSuccess
-
-        Nothing ->
-            CsvExportFunctionUndefined
+    -- todo if at any point entry and columns are not the same length, return error ?
+    data
+        |> Csv.Encode.encode
+            { encoder =
+                Csv.Encode.withFieldNames
+                    (\entry -> List.map2 Tuple.pair columns entry)
+            , fieldSeparator = ','
+            }
+        |> CsvExportSuccess
 
 
 
@@ -721,19 +726,13 @@ encodeStorageValueType valueType =
     Encode.string (storageValueTypeText valueType)
 
 
-encodeStorageEffect : Effect msg -> Value
-encodeStorageEffect effect =
-    case effect of
-        SaveFilterInLocalStorage key filter _ ->
-            Encode.object
-                [ ( "key", Encode.string key )
-                , ( "type", encodeStorageValueType StorageFilter )
-                , ( "value", encodeFilter filter )
-                ]
-
-        DownloadTableAsCsv _ _ ->
-            -- FIXME remove this case as it does not make sense
-            Debug.todo ""
+encodeStorageEffect : StorageKey -> SearchFilterState -> Value
+encodeStorageEffect key filter =
+    Encode.object
+        [ ( "key", Encode.string key )
+        , ( "type", encodeStorageValueType StorageFilter )
+        , ( "value", encodeFilter filter )
+        ]
 
 
 
