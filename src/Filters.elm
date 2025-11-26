@@ -61,7 +61,7 @@ type SearchFilterState
 {- MAIN PUBLIC UTILS -}
 
 
-{-| Create the search filter as a Substring, the main type of filter
+{-| Create the search filter as a Substring, the main type of filter for now
 -}
 substring : String -> SearchFilterState
 substring value =
