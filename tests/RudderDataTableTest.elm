@@ -38,14 +38,6 @@ columnFuzz =
         |> andMap (constant Ordering.natural)
 
 
-exportCsvColumnFuzz : Fuzzer (Column String ())
-exportCsvColumnFuzz =
-    constant Column
-        |> andMap columnNameFuzz
-        |> andMap (constant (\_ -> Html.text ""))
-        |> andMap (constant (\_ _ -> LT))
-
-
 nonEmptyListFuzzer : Fuzzer a -> Fuzzer (NonEmptyList.Nonempty a)
 nonEmptyListFuzzer aFuzz =
     map2 NonEmptyList.Nonempty aFuzz (list aFuzz)
@@ -62,14 +54,6 @@ optionsFuzz filter =
         (buildOptions.newOptions
             |> buildOptions.withStorage { key = "", saveToLocalStoragePort = \_ -> Cmd.none }
             |> buildOptions.withFilter (SearchInputFilter { predicate = byValues (\d -> [ d ]), state = filter })
-        )
-
-
-csvOptionsFuzz : Fuzzer (Options String ())
-csvOptionsFuzz =
-    constant
-        (buildOptions.newOptions
-            |> buildOptions.withCsvExport { fileName = "myFile.txt", entryToStringList = \_ -> [] }
         )
 
 
@@ -95,19 +79,6 @@ sortModelFuzz sortBy sortOrder =
                 |> andMap (constant sortBy)
                 |> andMap (constant sortOrder)
                 |> andMap (optionsFuzz Filters.empty)
-    in
-    map2 RudderDataTable.init config dataFuzzer
-
-
-exportCsvModelFuzz : Fuzzer Model
-exportCsvModelFuzz =
-    let
-        config =
-            constant Config
-                |> andMap (nonEmptyListFuzzer exportCsvColumnFuzz)
-                |> andMap columnNameFuzz
-                |> andMap sortOrderFuzz
-                |> andMap csvOptionsFuzz
     in
     map2 RudderDataTable.init config dataFuzzer
 
@@ -199,36 +170,36 @@ suite =
         , test "test csv export on empty table that does not define a csv export configuration" <|
             \_ ->
                 init (buildConfig.newConfig (NonEmptyList.singleton (Column (ColumnName "name") (\_ -> div [] []) (\_ _ -> LT)))) []
-                    |> updateWithEffect (exportCsv "myFile")
+                    |> updateWithEffect exportCsv
                     |> effect
-                    |> Expect.equal [ DownloadTableAsCsv "myFile" CsvExportConfigUndefined ]
+                    |> Expect.equal [ DownloadTableAsCsv CsvExportConfigUndefined ]
         , test "test csv export on empty table that defines a csv export configuration" <|
             \_ ->
                 let
                     options =
                         buildOptions.newOptions
-                            |> buildOptions.withCsvExport { fileName = "otherFile", entryToStringList = \row -> row }
+                            |> buildOptions.withCsvExport { fileName = "myFile", entryToStringList = \row -> row, btnAttributes = [] }
                 in
                 init
                     (buildConfig.newConfig (NonEmptyList.singleton (Column (ColumnName "name") (\_ -> div [] []) (\_ _ -> LT)))
                         |> buildConfig.withOptions options
                     )
                     []
-                    |> updateWithEffect (exportCsv "otherFile")
+                    |> updateWithEffect exportCsv
                     |> effect
-                    |> Expect.equal [ DownloadTableAsCsv "otherFile" (CsvExportSuccess "") ]
+                    |> Expect.equal [ DownloadTableAsCsv (CsvExportSuccess "myFile" "") ]
         , fuzz (nonEmptyListFuzzer columnFuzz) "test csv export on empty tables that do not define a csv export configuration" <|
             \c ->
                 init (buildConfig.newConfig c) []
-                    |> updateWithEffect (exportCsv "yetAnotherFile")
+                    |> updateWithEffect exportCsv
                     |> effect
-                    |> Expect.equal [ DownloadTableAsCsv "yetAnotherFile" CsvExportConfigUndefined ]
+                    |> Expect.equal [ DownloadTableAsCsv CsvExportConfigUndefined ]
         , test "test csv export on non-empty table that defines a csv export configuration" <|
             \_ ->
                 let
                     options =
                         buildOptions.newOptions
-                            |> buildOptions.withCsvExport { fileName = "otherFile", entryToStringList = \{ a, b } -> [ a, String.fromInt b ] }
+                            |> buildOptions.withCsvExport { fileName = "otherFile", entryToStringList = \{ a, b } -> [ a, String.fromInt b ], btnAttributes = [] }
 
                     config =
                         buildConfig.newConfig
@@ -247,15 +218,15 @@ suite =
                         RudderDataTable.init config data
                 in
                 tab
-                    |> updateWithEffect (exportCsv "fileName")
+                    |> updateWithEffect exportCsv
                     |> effect
-                    |> Expect.equal [ DownloadTableAsCsv "fileName" (CsvExportSuccess "name,age\u{000D}\nAlice,45\u{000D}\nBob,37") ]
+                    |> Expect.equal [ DownloadTableAsCsv (CsvExportSuccess "otherFile" "name,age\u{000D}\nAlice,45\u{000D}\nBob,37") ]
         , test "test csv export on non-empty table that defines a csv export configuration and that contains fields with special characters" <|
             \_ ->
                 let
                     options =
                         buildOptions.newOptions
-                            |> buildOptions.withCsvExport { fileName = "otherFile", entryToStringList = \{ a, b } -> [ a, String.fromInt b ] }
+                            |> buildOptions.withCsvExport { fileName = "yetAnotherFile", entryToStringList = \{ a, b } -> [ a, String.fromInt b ], btnAttributes = [] }
 
                     config =
                         buildConfig.newConfig
@@ -275,7 +246,7 @@ suite =
                         RudderDataTable.init config data
                 in
                 tab
-                    |> updateWithEffect (exportCsv "fileName")
+                    |> updateWithEffect exportCsv
                     |> effect
-                    |> Expect.equal [ DownloadTableAsCsv "fileName" (CsvExportSuccess "name,age\u{000D}\n\"\"\"Al\"\"ice\"\"\",45\u{000D}\n\"Bo,b\",37\u{000D}\n\"\nEve\",28") ]
+                    |> Expect.equal [ DownloadTableAsCsv (CsvExportSuccess "yetAnotherFile" "name,age\u{000D}\n\"\"\"Al\"\"ice\"\"\",45\u{000D}\n\"Bo,b\",37\u{000D}\n\"\nEve\",28") ]
         ]

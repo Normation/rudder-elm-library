@@ -170,21 +170,21 @@ type alias StorageOptionsConfig msg =
 
 {-| CSV export configuration
 -}
-type alias CsvExportConfig row =
-    { fileName : String, entryToStringList : row -> List String }
+type alias CsvExportConfig row parentMsg =
+    { fileName : String, entryToStringList : row -> List String, btnAttributes : List (Attribute (Msg parentMsg)) }
 
 
 {-| Options for CSV export support of a given table
 -}
-type CsvExportOptions row
-    = CsvExportButton (CsvExportConfig row)
+type CsvExportOptions row msg
+    = CsvExportButton (CsvExportConfig row msg)
     | NoCsvExportButton
 
 
 {-| Datatypes that represent the possible results of exporting a table to CSV
 -}
 type CsvExportResult
-    = CsvExportSuccess String
+    = CsvExportSuccess String String
     | CsvExportConfigUndefined
 
 
@@ -213,7 +213,7 @@ type alias Options row msg =
     , refresh : RefreshButtonOptions msg
     , storage : StorageOptions msg
     , filter : FilterOptions row msg
-    , csvExport : CsvExportOptions row
+    , csvExport : CsvExportOptions row msg
     }
 
 
@@ -254,7 +254,7 @@ type Msg parentMsg
     | RefreshMsg
     | FilterInputChanged String
     | UpdateFilterMsg SearchFilterState
-    | ExportCsvMsg String
+    | ExportCsvMsg
     | ParentMsg parentMsg
 
 
@@ -269,7 +269,7 @@ type OutMsg parentMsg
 -}
 type Effect parentMsg
     = SaveFilterInLocalStorage StorageKey SearchFilterState (Value -> Cmd parentMsg)
-    | DownloadTableAsCsv String CsvExportResult
+    | DownloadTableAsCsv CsvExportResult
 
 
 
@@ -319,7 +319,7 @@ type alias OptionsBuilder row msg =
     , withRefresh : List (Attribute (Msg msg)) -> Options row msg -> Options row msg
     , withStorage : StorageOptionsConfig msg -> Options row msg -> Options row msg
     , withFilter : FilterOptionsType row msg -> Options row msg -> Options row msg
-    , withCsvExport : CsvExportConfig row -> Options row msg -> Options row msg
+    , withCsvExport : CsvExportConfig row msg -> Options row msg -> Options row msg
     }
 
 
@@ -455,9 +455,9 @@ interpret =
                 SaveFilterInLocalStorage key filter cb ->
                     cb (encodeStorageEffect key filter)
 
-                DownloadTableAsCsv fileName csvResult ->
+                DownloadTableAsCsv csvResult ->
                     case csvResult of
-                        CsvExportSuccess csv ->
+                        CsvExportSuccess fileName csv ->
                             File.Download.string fileName "text/csv" csv
 
                         CsvExportConfigUndefined ->
@@ -494,13 +494,13 @@ updateWithEffect msg (Model model) =
             in
             ( newModel, effects, Nothing )
 
-        ExportCsvMsg fileName ->
+        ExportCsvMsg ->
             case model.options.csvExport of
                 CsvExportButton csvExportConfig ->
-                    ( Model model, [ DownloadTableAsCsv fileName (tableToCsv (Model model) csvExportConfig) ], Nothing )
+                    ( Model model, [ DownloadTableAsCsv (tableToCsv (Model model) csvExportConfig) ], Nothing )
 
                 NoCsvExportButton ->
-                    ( Model model, [ DownloadTableAsCsv fileName CsvExportConfigUndefined ], Nothing )
+                    ( Model model, [ DownloadTableAsCsv CsvExportConfigUndefined ], Nothing )
 
         ParentMsg m ->
             -- FIXME: do we know the effects ?
@@ -600,7 +600,7 @@ updateFilter =
 
 {-| Internal Msg that produces the CSV export event; used in tests
 -}
-exportCsv : String -> Msg msg
+exportCsv : Msg msg
 exportCsv =
     ExportCsvMsg
 
@@ -686,7 +686,7 @@ storageValueTypeText valueType =
 
 {-| Table to CSV export function
 -}
-tableToCsv : Model row msg -> CsvExportConfig row -> CsvExportResult
+tableToCsv : Model row msg -> CsvExportConfig row msg -> CsvExportResult
 tableToCsv (Model model) { fileName, entryToStringList } =
     let
         -- first row contains column names
@@ -709,7 +709,7 @@ tableToCsv (Model model) { fileName, entryToStringList } =
                     (\entry -> List.map2 Tuple.pair columns entry)
             , fieldSeparator = ','
             }
-        |> CsvExportSuccess
+        |> CsvExportSuccess fileName
 
 
 
@@ -785,9 +785,7 @@ viewHeaderOptions { filter, refresh, csvExport } =
 
         ( NoFilter, NoRefreshButton, _ ) ->
             [ div [ class "ms-auto me-0" ]
-                (viewCsvExportButton
-                    csvExport
-                )
+                (viewCsvExportButton csvExport)
             ]
 
         -- FIXME: when there are export options, it should be a group of buttons at the end
@@ -810,20 +808,22 @@ viewRefreshButton option =
             [ button (onClick RefreshMsg :: attrs) [ i [ class "fa fa-refresh" ] [] ] ]
 
 
-viewCsvExportButton : CsvExportOptions row -> List (Html (Msg msg))
+viewCsvExportButton : CsvExportOptions row msg -> List (Html (Msg msg))
 viewCsvExportButton option =
     case option of
         NoCsvExportButton ->
             []
 
-        CsvExportButton config ->
+        CsvExportButton { btnAttributes } ->
             [ button
-                [ class "dt-button buttons-csv buttons-html5 btn btn-primary btn-export"
-                , tabindex 0
-                , attribute "aria-controls" "logsGrid"
-                , type_ "button"
-                , onClick (ExportCsvMsg config.fileName)
-                ]
+                ([ class "btn btn-primary btn-export"
+                 , tabindex 0
+                 , attribute "aria-controls" "logsGrid"
+                 , type_ "button"
+                 , onClick ExportCsvMsg
+                 ]
+                    ++ btnAttributes
+                )
                 [ span [] [ text "Export" ] ]
             ]
 
