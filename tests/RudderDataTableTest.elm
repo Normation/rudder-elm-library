@@ -146,103 +146,104 @@ suite =
             ColumnName "column"
     in
     describe "RudderDataTable"
-        [ {- FILTERS -}
-          fuzz (filterModelFuzz Filters.empty) "test that updating the filter of a table produces a \"SaveFilterInLocalStorage\" effect " <|
-            \m ->
-                let
-                    options =
-                        storageOptions m
+        [ describe "filters"
+            [ fuzz (filterModelFuzz Filters.empty) "test filter update on table that defines a configuration to save in localStorage" <|
+                \m ->
+                    let
+                        options =
+                            storageOptions m
 
-                    expectation =
-                        options
-                            |> Maybe.map (\{ key, saveToLocalStoragePort } -> Expect.equal [ SaveFilterInLocalStorage key stubFilter saveToLocalStoragePort ])
-                            |> Maybe.withDefault (\_ -> Expect.fail "initial model was not configured to save to local storage, please fix the stub fuzz")
-                in
-                updateWithEffect (updateFilter stubFilter) m |> effect |> expectation
-        , fuzz (filterModelFuzz Filters.empty) "test that the updateFilter effect successfully updates the filter of the model with the given filter" <|
-            \m -> updateWithEffect (updateFilter stubFilter) m |> model |> getFilterOptionValue |> Expect.equal "test"
-        , fuzz3 (filterModelFuzz Filters.empty) dataFuzzer substringFilterFuzz "test that the number of entries in a table does not change after applying a filter that is verified by all entries" <|
-            \m d f ->
-                let
-                    dataLen =
-                        List.length d
+                        expectation =
+                            options
+                                |> Maybe.map (\{ key, saveToLocalStoragePort } -> Expect.equal [ SaveFilterInLocalStorage key stubFilter saveToLocalStoragePort ])
+                                |> Maybe.withDefault (\_ -> Expect.fail "initial model was not configured to save to local storage, please fix the stub fuzz")
+                    in
+                    updateWithEffect (updateFilter stubFilter) m |> effect |> expectation
+            , fuzz (filterModelFuzz Filters.empty) "test filter on table that got updated with a new filter" <|
+                \m -> updateWithEffect (updateFilter stubFilter) m |> model |> getFilterOptionValue |> Expect.equal "test"
+            , fuzz3 (filterModelFuzz Filters.empty) dataFuzzer substringFilterFuzz "test filter on table when filter matches all entries" <|
+                \m d f ->
+                    let
+                        dataLen =
+                            List.length d
 
-                    filterText =
-                        getTextValue f
+                        filterText =
+                            getTextValue f
 
-                    -- each data contains the filter string so filtered data is the same
-                    data =
-                        List.map (String.append filterText) d
-                in
-                m
-                    |> updateData data
-                    |> updateWithEffect (updateFilter f)
-                    |> model
-                    |> getRows
-                    |> List.length
-                    |> Expect.equal dataLen
-
-        {- SORT -}
-        , fuzz (sortModelFuzz stubColumnName Asc) "test sorting on table when toggling already sorted column with Asc" <|
-            \m -> updateWithEffect (sortColumn stubColumnName) m |> model |> getSort |> Expect.equal ( stubColumnName, Desc )
-        , fuzz (sortModelFuzz stubColumnName Desc) "test sorting on table when toggling already sorted column with Desc" <|
-            \m -> updateWithEffect (sortColumn stubColumnName) m |> model |> getSort |> Expect.equal ( stubColumnName, Asc )
-        , fuzz2 (sortModelFuzz stubColumnName Asc) columnNameFuzz "test sorting on table when applying a column to sort with Asc order" <|
-            \m c -> updateWithEffect (sortColumn c) m |> model |> getSort |> Expect.equal ( c, Asc )
-        , fuzz2 (sortModelFuzz stubColumnName Asc) dataFuzzer "test that calling getRows on a table after sorting it in ascending order returns the rows in ascending order" <|
-            \m data ->
-                m
-                    |> updateData data
-                    |> updateWithEffect (sortColumn stubColumnName)
-                    |> model
-                    |> getRows
-                    |> Expect.equalLists (List.reverse (List.sort data))
-
-        {- CSV EXPORT -}
-        , fuzz (nonEmptyListFuzzer columnFuzz) "test csv export on empty table that does not define a csv export configuration" <|
-            \c ->
-                init (buildConfig.newConfig c) []
-                    |> updateWithEffect exportCsv
-                    |> effect
-                    |> Expect.equal [ IgnoreExportCsvMsgNoConfig ]
-        , fuzz
-            (csvModelFuzz (NonEmptyList.Nonempty "name" []) "myFile" (\row -> row) [])
-            "test csv export on empty table that defines a csv export configuration"
-          <|
-            \m ->
-                m
-                    |> updateWithEffect exportCsv
-                    |> effect
-                    |> Expect.equal [ DownloadTableAsCsv (CsvExportData "myFile" "") ]
-        , fuzz
-            (csvModelFuzz
-                (NonEmptyList.Nonempty "name" [ "age" ])
-                "otherFile"
-                (\{ a, b } -> [ a, String.fromInt b ])
-                [ { a = "Alice", b = 45 }, { a = "Bob", b = 37 } ]
-            )
-            "test csv export on non-empty table that defines a csv export configuration"
-          <|
-            \m ->
-                m
-                    |> updateWithEffect exportCsv
-                    |> effect
-                    |> Expect.equal [ DownloadTableAsCsv (CsvExportData "otherFile" "name,age\u{000D}\nAlice,45\u{000D}\nBob,37") ]
-        , fuzz
-            (csvModelFuzz
-                (NonEmptyList.Nonempty "\"Name\"" [ "Age,probably" ])
-                "yetAnotherFile"
-                (\{ a, b } -> [ a, String.fromInt b ])
-                [ { a = "\"Al\"ice\"", b = 45 }
-                , { a = "Bo,b", b = 37 }
-                , { a = "\nEve", b = 28 }
-                ]
-            )
-            "test csv export on non-empty table that defines a csv export configuration, and that contains column names and fields with special characters"
-          <|
-            \m ->
-                m
-                    |> updateWithEffect exportCsv
-                    |> effect
-                    |> Expect.equal [ DownloadTableAsCsv (CsvExportData "yetAnotherFile" "\"\"\"Name\"\"\",\"Age,probably\"\u{000D}\n\"\"\"Al\"\"ice\"\"\",45\u{000D}\n\"Bo,b\",37\u{000D}\n\"\nEve\",28") ]
+                        -- each data contains the filter string so filtered data is the same
+                        data =
+                            List.map (String.append filterText) d
+                    in
+                    m
+                        |> updateData data
+                        |> updateWithEffect (updateFilter f)
+                        |> model
+                        |> getRows
+                        |> List.length
+                        |> Expect.equal dataLen
+            ]
+        , describe "sort"
+            [ fuzz (sortModelFuzz stubColumnName Asc) "test sorting on table when toggling already sorted column with Asc" <|
+                \m -> updateWithEffect (sortColumn stubColumnName) m |> model |> getSort |> Expect.equal ( stubColumnName, Desc )
+            , fuzz (sortModelFuzz stubColumnName Desc) "test sorting on table when toggling already sorted column with Desc" <|
+                \m -> updateWithEffect (sortColumn stubColumnName) m |> model |> getSort |> Expect.equal ( stubColumnName, Asc )
+            , fuzz2 (sortModelFuzz stubColumnName Asc) columnNameFuzz "test sorting on table when applying a column to sort with Asc order" <|
+                \m c -> updateWithEffect (sortColumn c) m |> model |> getSort |> Expect.equal ( c, Asc )
+            , fuzz2 (sortModelFuzz stubColumnName Asc) dataFuzzer "test getRows on table that was sorted with Asc order" <|
+                \m data ->
+                    m
+                        |> updateData data
+                        |> updateWithEffect (sortColumn stubColumnName)
+                        |> model
+                        |> getRows
+                        |> Expect.equalLists (List.reverse (List.sort data))
+            ]
+        , describe "csv export"
+            [ fuzz (nonEmptyListFuzzer columnFuzz) "test csv export on empty table that does not define a csv export configuration" <|
+                \c ->
+                    init (buildConfig.newConfig c) []
+                        |> updateWithEffect exportCsv
+                        |> effect
+                        |> Expect.equal [ IgnoreExportCsvMsgNoConfig ]
+            , fuzz
+                (csvModelFuzz (NonEmptyList.Nonempty "name" []) "myFile" (\row -> row) [])
+                "test csv export on empty table that defines a csv export configuration"
+              <|
+                \m ->
+                    m
+                        |> updateWithEffect exportCsv
+                        |> effect
+                        |> Expect.equal [ DownloadTableAsCsv (CsvExportData "myFile" "") ]
+            , fuzz
+                (csvModelFuzz
+                    (NonEmptyList.Nonempty "name" [ "age" ])
+                    "otherFile"
+                    (\{ a, b } -> [ a, String.fromInt b ])
+                    [ { a = "Alice", b = 45 }, { a = "Bob", b = 37 } ]
+                )
+                "test csv export on non-empty table that defines a csv export configuration"
+              <|
+                \m ->
+                    m
+                        |> updateWithEffect exportCsv
+                        |> effect
+                        |> Expect.equal [ DownloadTableAsCsv (CsvExportData "otherFile" "name,age\u{000D}\nAlice,45\u{000D}\nBob,37") ]
+            , fuzz
+                (csvModelFuzz
+                    (NonEmptyList.Nonempty "\"Name\"" [ "Age,probably" ])
+                    "yetAnotherFile"
+                    (\{ a, b } -> [ a, String.fromInt b ])
+                    [ { a = "\"Al\"ice\"", b = 45 }
+                    , { a = "Bo,b", b = 37 }
+                    , { a = "\nEve", b = 28 }
+                    ]
+                )
+                "test csv export on non-empty table that defines a csv export configuration, and that contains column names and fields with special characters"
+              <|
+                \m ->
+                    m
+                        |> updateWithEffect exportCsv
+                        |> effect
+                        |> Expect.equal [ DownloadTableAsCsv (CsvExportData "yetAnotherFile" "\"\"\"Name\"\"\",\"Age,probably\"\u{000D}\n\"\"\"Al\"\"ice\"\"\",45\u{000D}\n\"Bo,b\",37\u{000D}\n\"\nEve\",28") ]
+            ]
         ]
