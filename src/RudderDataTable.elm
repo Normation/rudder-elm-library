@@ -6,6 +6,8 @@ module RudderDataTable exposing
     , RefreshButtonOptions(..)
     , StorageOptions, StorageOptionsConfig, StorageKey
     , Customizations
+    , CsvExportData
+    , CsvExportConfig, CsvExportOptions
     , updateData, updateFilter, updateDataWithFilter
     , Model, Msg
     , view, update, init
@@ -13,6 +15,7 @@ module RudderDataTable exposing
     , Effect(..), updateWithEffect
     , sortColumn
     , storageOptions, getFilterOptionValue, getRows, getSort
+    , exportCsv
     -- the internal message type, we never want to expose it with Msg(..)
     -- for testing the updates
     )
@@ -36,6 +39,8 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 @docs RefreshButtonOptions
 @docs StorageOptions, StorageOptionsConfig, StorageKey
 @docs Customizations
+@docs CsvExportData
+@docs CsvExportConfig, CsvExportOptions
 
 
 # State-changing functions
@@ -55,12 +60,15 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 @docs Effect, updateWithEffect
 @docs sortColumn
 @docs storageOptions, getFilterOptionValue, getRows, getSort
+@docs exportCsv
 
 -}
 
+import Csv.Encode
+import File.Download
 import Filters exposing (FilterStringPredicate, SearchFilterState, applyString, getTextValue, substring)
-import Html exposing (Attribute, Html, button, div, i, input, table, tbody, td, text, th, thead, tr)
-import Html.Attributes exposing (class, colspan, placeholder, rowspan, type_, value)
+import Html exposing (Attribute, Html, button, div, i, input, span, table, tbody, td, text, th, thead, tr)
+import Html.Attributes exposing (class, colspan, placeholder, rowspan, tabindex, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Json.Decode exposing (Value)
 import Json.Encode as Encode
@@ -99,12 +107,10 @@ type ColumnName
 
 {-| A table column which can be rendered in multiple ways, by default in arbitrary HTML (with the same concrete message as in the encapsulating parent).
 It can also be sorted, an enforces ordering on all columns. FIXME: it could be made optional.
-It supports rendering the table into CSV if provided. FIXME: the CSV function could be specified in the Options.
 -}
 type alias Column row msg =
     { name : ColumnName
     , renderHtml : row -> Html msg
-    , renderCsv : Maybe (row -> List String)
     , ordering : Ordering row
     }
 
@@ -162,6 +168,25 @@ type alias StorageOptionsConfig msg =
     }
 
 
+{-| CSV export configuration
+-}
+type alias CsvExportConfig row parentMsg =
+    { fileName : String, entryToStringList : row -> List String, btnAttributes : List (Attribute (Msg parentMsg)) }
+
+
+{-| Options for CSV export support of a given table
+-}
+type CsvExportOptions row msg
+    = CsvExportButton (CsvExportConfig row msg)
+    | NoCsvExportButton
+
+
+{-| Datatype that represents the result of exporting a table to CSV
+-}
+type alias CsvExportData =
+    { fileName : String, csv : String }
+
+
 {-| Table display customizations for adding custom HTML attributes, e.g. `class` to parts of the table.
 The defaults should be fine, but customizations can be added and defined depending on each case.
 -}
@@ -187,6 +212,7 @@ type alias Options row msg =
     , refresh : RefreshButtonOptions msg
     , storage : StorageOptions msg
     , filter : FilterOptions row msg
+    , csvExport : CsvExportOptions row msg
     }
 
 
@@ -227,6 +253,7 @@ type Msg parentMsg
     | RefreshMsg
     | FilterInputChanged String
     | UpdateFilterMsg SearchFilterState
+    | ExportCsvMsg
     | ParentMsg parentMsg
 
 
@@ -241,10 +268,12 @@ type OutMsg parentMsg
 -}
 type Effect parentMsg
     = SaveFilterInLocalStorage StorageKey SearchFilterState (Value -> Cmd parentMsg)
+    | DownloadTableAsCsv CsvExportData
+    | IgnoreExportCsvMsgNoConfig
 
 
 
--- Builders
+{- BUILDERS -}
 
 
 {-| The builder DSL for the config. It allows creating the custom configuration you want for you table :
@@ -290,6 +319,7 @@ type alias OptionsBuilder row msg =
     , withRefresh : List (Attribute (Msg msg)) -> Options row msg -> Options row msg
     , withStorage : StorageOptionsConfig msg -> Options row msg -> Options row msg
     , withFilter : FilterOptionsType row msg -> Options row msg -> Options row msg
+    , withCsvExport : CsvExportConfig row msg -> Options row msg -> Options row msg
     }
 
 
@@ -312,11 +342,12 @@ buildOptions =
     , withRefresh = \opt -> \state -> { state | refresh = RefreshButtonOptions opt }
     , withStorage = \opt -> \state -> { state | storage = StorageOptions opt }
     , withFilter = \opt -> \state -> { state | filter = FilterOptions opt }
+    , withCsvExport = \opt -> \state -> { state | csvExport = CsvExportButton opt }
     }
 
 
 
--- defaults
+{- DEFAULTS -}
 
 
 defaultConfig : NonEmptyList.Nonempty (Column row msg) -> Config row msg
@@ -336,6 +367,7 @@ defaultOptions =
     , refresh = NoRefreshButton
     , storage = NoStorage
     , filter = NoFilter
+    , csvExport = NoCsvExportButton
     }
 
 
@@ -353,7 +385,7 @@ defaultCustomizations =
 
 
 
--- getters
+{- GETTERS -}
 
 
 {-| Getter for the storage options on the model
@@ -383,7 +415,7 @@ getRows (Model { data }) =
 
 
 
--- update
+{- UPDATE -}
 
 
 {-| Initialize from a set of data, useful in "refresh" scenario or for initialization
@@ -420,8 +452,14 @@ interpret =
     List.map
         (\e ->
             case e of
-                SaveFilterInLocalStorage _ _ cb ->
-                    cb (encodeStorageEffect e)
+                SaveFilterInLocalStorage key filter cb ->
+                    cb (encodeStorageEffect key filter)
+
+                DownloadTableAsCsv { fileName, csv } ->
+                    File.Download.string fileName "text/csv" csv
+
+                IgnoreExportCsvMsgNoConfig ->
+                    Cmd.none
         )
         >> Cmd.batch
 
@@ -452,6 +490,14 @@ updateWithEffect msg (Model model) =
                     updateOnFilterInput s (Model model)
             in
             ( newModel, effects, Nothing )
+
+        ExportCsvMsg ->
+            case model.options.csvExport of
+                CsvExportButton csvExportConfig ->
+                    ( Model model, [ DownloadTableAsCsv (tableToCsv (Model model) csvExportConfig) ], Nothing )
+
+                NoCsvExportButton ->
+                    ( Model model, [ IgnoreExportCsvMsgNoConfig ], Nothing )
 
         ParentMsg m ->
             -- FIXME: do we know the effects ?
@@ -532,7 +578,7 @@ setSearchInputFilterState state option =
 
 
 
--- message constructors
+{- MESSAGE CONSTRUCTORS -}
 
 
 {-| Internal Msg to produce message to sort column, for testing
@@ -549,8 +595,15 @@ updateFilter =
     UpdateFilterMsg
 
 
+{-| Internal Msg that produces the CSV export event; used in tests
+-}
+exportCsv : Msg msg
+exportCsv =
+    ExportCsvMsg
 
--- internal helpers
+
+
+{- INTERNAL HELPERS -}
 
 
 sortByColumnName : ColumnName -> Model row msg -> Model row msg
@@ -614,7 +667,7 @@ setSortOrToggle columnName sortState =
 
 
 
--- storage and encoding
+{- STORAGE AND ENCODING -}
 
 
 storageValueTypeText : StorageValueType -> String
@@ -622,6 +675,37 @@ storageValueTypeText valueType =
     case valueType of
         StorageFilter ->
             "storageFilter"
+
+
+
+{- CSV EXPORT -}
+
+
+{-| Table to CSV export function
+-}
+tableToCsv : Model row msg -> CsvExportConfig row msg -> CsvExportData
+tableToCsv (Model model) { fileName, entryToStringList } =
+    let
+        -- first row contains column names
+        columns : List String
+        columns =
+            model.columns
+                |> NonEmptyList.toList
+                |> List.map (\c -> c.name)
+                |> List.map (\(ColumnName c) -> c)
+
+        data : List (List String)
+        data =
+            model.data |> List.map entryToStringList
+    in
+    data
+        |> Csv.Encode.encode
+            { encoder =
+                Csv.Encode.withFieldNames
+                    (\entry -> List.map2 Tuple.pair columns entry)
+            , fieldSeparator = ','
+            }
+        |> CsvExportData fileName
 
 
 
@@ -638,19 +722,17 @@ encodeStorageValueType valueType =
     Encode.string (storageValueTypeText valueType)
 
 
-encodeStorageEffect : Effect msg -> Value
-encodeStorageEffect effect =
-    case effect of
-        SaveFilterInLocalStorage key filter _ ->
-            Encode.object
-                [ ( "key", Encode.string key )
-                , ( "type", encodeStorageValueType StorageFilter )
-                , ( "value", encodeFilter filter )
-                ]
+encodeStorageEffect : StorageKey -> SearchFilterState -> Value
+encodeStorageEffect key filter =
+    Encode.object
+        [ ( "key", Encode.string key )
+        , ( "type", encodeStorageValueType StorageFilter )
+        , ( "value", encodeFilter filter )
+        ]
 
 
 
--- Views
+{- VIEW -}
 
 
 {-| The main view function for the table
@@ -687,24 +769,29 @@ view (Model ({ columns, data, options } as model)) =
 
 
 viewHeaderOptions : Options row msg -> List (Html (Msg msg))
-viewHeaderOptions { filter, refresh } =
-    case ( filter, refresh ) of
-        ( NoFilter, NoRefreshButton ) ->
+viewHeaderOptions { filter, refresh, csvExport } =
+    case ( filter, refresh, csvExport ) of
+        ( NoFilter, NoRefreshButton, NoCsvExportButton ) ->
             []
 
-        ( NoFilter, (RefreshButtonOptions _) as option ) ->
+        ( NoFilter, (RefreshButtonOptions _) as option, _ ) ->
             --FIXME: should the buttons still be aligned at the end ?
-            [ div [ class "ms-auto me-0" ] (viewRefreshButton option)
+            [ div [ class "ms-auto me-0" ] (viewCsvExportButton csvExport ++ viewRefreshButton option)
+            ]
+
+        ( NoFilter, NoRefreshButton, _ ) ->
+            [ div [ class "ms-auto me-0" ]
+                (viewCsvExportButton csvExport)
             ]
 
         -- FIXME: when there are export options, it should be a group of buttons at the end
-        ( FilterOptions (SearchInputFilter { state }), refreshOptions ) ->
+        ( FilterOptions (SearchInputFilter { state }), refreshOptions, csvOptions ) ->
             input [ class "form-control", type_ "text", placeholder "Filter...", onInput FilterInputChanged, value (getTextValue state) ] []
-                :: viewRefreshButton refreshOptions
+                :: (viewCsvExportButton csvOptions ++ viewRefreshButton refreshOptions)
 
-        ( FilterOptions (HtmlFilter { html, toMsg }), refreshOptions ) ->
+        ( FilterOptions (HtmlFilter { html, toMsg }), refreshOptions, csvOptions ) ->
             Html.map toMsg html
-                :: viewRefreshButton refreshOptions
+                :: (viewCsvExportButton csvOptions ++ viewRefreshButton refreshOptions)
 
 
 viewRefreshButton : RefreshButtonOptions msg -> List (Html (Msg msg))
@@ -715,6 +802,25 @@ viewRefreshButton option =
 
         RefreshButtonOptions attrs ->
             [ button (onClick RefreshMsg :: attrs) [ i [ class "fa fa-refresh" ] [] ] ]
+
+
+viewCsvExportButton : CsvExportOptions row msg -> List (Html (Msg msg))
+viewCsvExportButton option =
+    case option of
+        NoCsvExportButton ->
+            []
+
+        CsvExportButton { btnAttributes } ->
+            [ button
+                ([ class "btn btn-primary btn-export"
+                 , tabindex 0
+                 , type_ "button"
+                 , onClick ExportCsvMsg
+                 ]
+                    ++ btnAttributes
+                )
+                [ span [] [ text "Export" ] ]
+            ]
 
 
 tableHeader : NonEmptyList.Nonempty (Column row msg) -> Sort a -> Html (Msg msg)
