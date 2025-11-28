@@ -8,7 +8,6 @@ module RudderDataTable exposing
     , Customizations
     , CsvExportData
     , CsvExportConfig, CsvExportOptions
-    , exportCsv
     , updateData, updateFilter, updateDataWithFilter
     , Model, Msg
     , view, update, init
@@ -16,6 +15,7 @@ module RudderDataTable exposing
     , Effect(..), updateWithEffect
     , sortColumn
     , storageOptions, getFilterOptionValue, getRows, getSort
+    , exportCsv
     -- the internal message type, we never want to expose it with Msg(..)
     -- for testing the updates
     )
@@ -41,7 +41,6 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 @docs Customizations
 @docs CsvExportData
 @docs CsvExportConfig, CsvExportOptions
-@docs exportCsv
 
 
 # State-changing functions
@@ -61,6 +60,7 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 @docs Effect, updateWithEffect
 @docs sortColumn
 @docs storageOptions, getFilterOptionValue, getRows, getSort
+@docs exportCsv
 
 -}
 

@@ -98,8 +98,8 @@ csvColumnFuzz (NonEmptyList.Nonempty head tail) =
         (sequence (List.map colNameToColumnFuzz tail))
 
 
-csvModelFuzz : NonEmptyList.Nonempty String -> String -> (row -> List String) -> Fuzzer (List row) -> Fuzzer (RudderDataTable.Model row msg)
-csvModelFuzz columnNames fileName entryToStringList dataFuzz =
+csvModelFuzz : NonEmptyList.Nonempty String -> String -> (row -> List String) -> List row -> Fuzzer (RudderDataTable.Model row msg)
+csvModelFuzz columnNames fileName entryToStringList data =
     let
         options =
             buildOptions.newOptions
@@ -112,7 +112,7 @@ csvModelFuzz columnNames fileName entryToStringList dataFuzz =
                 |> andMap sortOrderFuzz
                 |> andMap (constant options)
     in
-    map2 RudderDataTable.init config dataFuzz
+    map2 RudderDataTable.init config (constant data)
 
 
 applyFilterFuzz : Fuzzer ((String -> Bool) -> String -> Bool)
@@ -147,7 +147,7 @@ suite =
     in
     describe "RudderDataTable"
         [ {- FILTERS -}
-          fuzz (filterModelFuzz Filters.empty) "save new filter in local storage" <|
+          fuzz (filterModelFuzz Filters.empty) "test that updating the filter of a table produces a \"SaveFilterInLocalStorage\" effect " <|
             \m ->
                 let
                     options =
@@ -159,9 +159,9 @@ suite =
                             |> Maybe.withDefault (\_ -> Expect.fail "initial model was not configured to save to local storage, please fix the stub fuzz")
                 in
                 updateWithEffect (updateFilter stubFilter) m |> effect |> expectation
-        , fuzz (filterModelFuzz Filters.empty) "save new filter in model" <|
+        , fuzz (filterModelFuzz Filters.empty) "test that the updateFilter effect successfully updates the filter of the model with the given filter" <|
             \m -> updateWithEffect (updateFilter stubFilter) m |> model |> getFilterOptionValue |> Expect.equal "test"
-        , fuzz3 (filterModelFuzz Filters.empty) dataFuzzer substringFilterFuzz "apply substring filter to data" <|
+        , fuzz3 (filterModelFuzz Filters.empty) dataFuzzer substringFilterFuzz "test that the number of entries in a table does not change after applying a filter that is verified by all entries" <|
             \m d f ->
                 let
                     dataLen =
@@ -183,13 +183,13 @@ suite =
                     |> Expect.equal dataLen
 
         {- SORT -}
-        , fuzz (sortModelFuzz stubColumnName Asc) "toggle already sorted column with Asc" <|
+        , fuzz (sortModelFuzz stubColumnName Asc) "test sorting on table when toggling already sorted column with Asc" <|
             \m -> updateWithEffect (sortColumn stubColumnName) m |> model |> getSort |> Expect.equal ( stubColumnName, Desc )
-        , fuzz (sortModelFuzz stubColumnName Desc) "toggle already sorted column with Desc" <|
+        , fuzz (sortModelFuzz stubColumnName Desc) "test sorting on table when toggling already sorted column with Desc" <|
             \m -> updateWithEffect (sortColumn stubColumnName) m |> model |> getSort |> Expect.equal ( stubColumnName, Asc )
-        , fuzz2 (sortModelFuzz stubColumnName Asc) columnNameFuzz "apply column with Asc order" <|
+        , fuzz2 (sortModelFuzz stubColumnName Asc) columnNameFuzz "test sorting on table when applying a column to sort with Asc order" <|
             \m c -> updateWithEffect (sortColumn c) m |> model |> getSort |> Expect.equal ( c, Asc )
-        , fuzz2 (sortModelFuzz stubColumnName Asc) dataFuzzer "apply sort to data" <|
+        , fuzz2 (sortModelFuzz stubColumnName Asc) dataFuzzer "test that calling getRows on a table after sorting it in ascending order returns the rows in ascending order" <|
             \m data ->
                 m
                     |> updateData data
@@ -206,7 +206,7 @@ suite =
                     |> effect
                     |> Expect.equal [ IgnoreExportCsvMsgNoConfig ]
         , fuzz
-            (csvModelFuzz (NonEmptyList.Nonempty "name" []) "myFile" (\row -> row) (constant []))
+            (csvModelFuzz (NonEmptyList.Nonempty "name" []) "myFile" (\row -> row) [])
             "test csv export on empty table that defines a csv export configuration"
           <|
             \m ->
@@ -219,7 +219,7 @@ suite =
                 (NonEmptyList.Nonempty "name" [ "age" ])
                 "otherFile"
                 (\{ a, b } -> [ a, String.fromInt b ])
-                (constant [ { a = "Alice", b = 45 }, { a = "Bob", b = 37 } ])
+                [ { a = "Alice", b = 45 }, { a = "Bob", b = 37 } ]
             )
             "test csv export on non-empty table that defines a csv export configuration"
           <|
@@ -233,12 +233,10 @@ suite =
                 (NonEmptyList.Nonempty "\"Name\"" [ "Age,probably" ])
                 "yetAnotherFile"
                 (\{ a, b } -> [ a, String.fromInt b ])
-                (constant
-                    [ { a = "\"Al\"ice\"", b = 45 }
-                    , { a = "Bo,b", b = 37 }
-                    , { a = "\nEve", b = 28 }
-                    ]
-                )
+                [ { a = "\"Al\"ice\"", b = 45 }
+                , { a = "Bo,b", b = 37 }
+                , { a = "\nEve", b = 28 }
+                ]
             )
             "test csv export on non-empty table that defines a csv export configuration, and that contains column names and fields with special characters"
           <|
