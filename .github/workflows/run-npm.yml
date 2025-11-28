@@ -1,4 +1,4 @@
-name: Dependencies (shared worfklow)
+name: Run a npm script (shared workflow)
 
 on:
   workflow_call:
