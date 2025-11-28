@@ -6,7 +6,7 @@ module RudderDataTable exposing
     , RefreshButtonOptions(..)
     , StorageOptions, StorageOptionsConfig, StorageKey
     , Customizations
-    , CsvExportResult(..)
+    , CsvExportData
     , CsvExportConfig, CsvExportOptions
     , exportCsv
     , updateData, updateFilter, updateDataWithFilter
@@ -39,7 +39,7 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 @docs RefreshButtonOptions
 @docs StorageOptions, StorageOptionsConfig, StorageKey
 @docs Customizations
-@docs CsvExportResult
+@docs CsvExportData
 @docs CsvExportConfig, CsvExportOptions
 @docs exportCsv
 
@@ -68,7 +68,7 @@ import Csv.Encode
 import File.Download
 import Filters exposing (FilterStringPredicate, SearchFilterState, applyString, getTextValue, substring)
 import Html exposing (Attribute, Html, button, div, i, input, span, table, tbody, td, text, th, thead, tr)
-import Html.Attributes exposing (attribute, class, colspan, placeholder, rowspan, tabindex, type_, value)
+import Html.Attributes exposing (class, colspan, placeholder, rowspan, tabindex, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Json.Decode exposing (Value)
 import Json.Encode as Encode
@@ -181,11 +181,10 @@ type CsvExportOptions row msg
     | NoCsvExportButton
 
 
-{-| Datatypes that represent the possible results of exporting a table to CSV
+{-| Datatype that represents the result of exporting a table to CSV
 -}
-type CsvExportResult
-    = CsvExportSuccess String String
-    | CsvExportConfigUndefined
+type alias CsvExportData =
+    { fileName : String, csv : String }
 
 
 {-| Table display customizations for adding custom HTML attributes, e.g. `class` to parts of the table.
@@ -269,7 +268,8 @@ type OutMsg parentMsg
 -}
 type Effect parentMsg
     = SaveFilterInLocalStorage StorageKey SearchFilterState (Value -> Cmd parentMsg)
-    | DownloadTableAsCsv CsvExportResult
+    | DownloadTableAsCsv CsvExportData
+    | IgnoreExportCsvMsgNoConfig
 
 
 
@@ -455,14 +455,11 @@ interpret =
                 SaveFilterInLocalStorage key filter cb ->
                     cb (encodeStorageEffect key filter)
 
-                DownloadTableAsCsv csvResult ->
-                    case csvResult of
-                        CsvExportSuccess fileName csv ->
-                            File.Download.string fileName "text/csv" csv
+                DownloadTableAsCsv { fileName, csv } ->
+                    File.Download.string fileName "text/csv" csv
 
-                        CsvExportConfigUndefined ->
-                            -- FIXME display an error notification instead ?
-                            Cmd.none
+                IgnoreExportCsvMsgNoConfig ->
+                    Cmd.none
         )
         >> Cmd.batch
 
@@ -500,7 +497,7 @@ updateWithEffect msg (Model model) =
                     ( Model model, [ DownloadTableAsCsv (tableToCsv (Model model) csvExportConfig) ], Nothing )
 
                 NoCsvExportButton ->
-                    ( Model model, [ DownloadTableAsCsv CsvExportConfigUndefined ], Nothing )
+                    ( Model model, [ IgnoreExportCsvMsgNoConfig ], Nothing )
 
         ParentMsg m ->
             -- FIXME: do we know the effects ?
@@ -686,7 +683,7 @@ storageValueTypeText valueType =
 
 {-| Table to CSV export function
 -}
-tableToCsv : Model row msg -> CsvExportConfig row msg -> CsvExportResult
+tableToCsv : Model row msg -> CsvExportConfig row msg -> CsvExportData
 tableToCsv (Model model) { fileName, entryToStringList } =
     let
         -- first row contains column names
@@ -701,7 +698,6 @@ tableToCsv (Model model) { fileName, entryToStringList } =
         data =
             model.data |> List.map entryToStringList
     in
-    -- todo if at any point entry and columns are not the same length, return error ?
     data
         |> Csv.Encode.encode
             { encoder =
@@ -709,7 +705,7 @@ tableToCsv (Model model) { fileName, entryToStringList } =
                     (\entry -> List.map2 Tuple.pair columns entry)
             , fieldSeparator = ','
             }
-        |> CsvExportSuccess fileName
+        |> CsvExportData fileName
 
 
 
@@ -818,7 +814,6 @@ viewCsvExportButton option =
             [ button
                 ([ class "btn btn-primary btn-export"
                  , tabindex 0
-                 , attribute "aria-controls" "logsGrid"
                  , type_ "button"
                  , onClick ExportCsvMsg
                  ]
