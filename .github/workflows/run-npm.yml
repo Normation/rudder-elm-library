@@ -32,11 +32,7 @@ jobs:
           path: ~/.elm
           key: elm-${{ hashFiles('elm.json', 'elm-tooling.json', 'review/elm.json') }}
 
-      # Install npm packages, unless we restored them from cache.
-      # Since `npm ci` removes the node_modules folder before running it’s
-      # important to skip this step if cache was restored.
       - name: npm ci
-        if: steps.cache-node_modules.outputs.cache-hit != 'true'
         run: npm ci
 
       - name: Add all dependencies (including elm-review, elm, elm-format, ...) to path
