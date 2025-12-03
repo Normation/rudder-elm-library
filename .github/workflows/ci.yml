@@ -1,0 +1,40 @@
+name: CI
+
+on: [ push, pull_request ]
+
+jobs:
+
+  build:
+    uses: ./.github/workflows/run-npm.yml
+    with:
+      npm-script: build
+
+  test:
+    uses: ./.github/workflows/run-npm.yml
+    with:
+      npm-script: test
+
+  check:
+    uses: ./.github/workflows/run-npm.yml
+    with:
+      npm-script: check
+
+  build-doc:
+    uses: ./.github/workflows/run-npm.yml
+    with:
+      npm-script: doc
+
+  # publish:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - name: Elm Publish
+  #       uses: dillonkearns/elm-publish-action@v1
+  #       with:
+  #         github-token: ${{ secrets.GITHUB_TOKEN }}
+  #         path-to-elm: ./node_modules/.bin/elm
+  #     - run: npm run build
+  #     - id: npm-publish
+  #       if: github.ref == 'refs/heads/main'
+  #       uses: JS-DevTools/npm-publish@v1
+  #       with:
+  #         token: ${{ secrets.NPM_TOKEN }}
