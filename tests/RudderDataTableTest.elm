@@ -25,6 +25,11 @@ substringFilterFuzz =
     map Filters.substring (map String.fromList (list (intRange 33 126 |> map Char.fromCode)))
 
 
+nonEmptySubstringFilterFuzz : Fuzzer SearchFilterState
+nonEmptySubstringFilterFuzz =
+    map Filters.substring (map String.fromList (listOfLengthBetween 1 32 (intRange 33 126 |> map Char.fromCode)))
+
+
 columnNameFuzz : Fuzzer ColumnName
 columnNameFuzz =
     map ColumnName string
@@ -181,6 +186,36 @@ suite =
                         |> getRows
                         |> List.length
                         |> Expect.equal dataLen
+            , fuzz3 (filterModelFuzz Filters.empty) dataFuzzer nonEmptySubstringFilterFuzz "test empty filter on table after applying filter that doesn't match some entries" <|
+                \m d f ->
+                    let
+                        filterText =
+                            getTextValue f
+
+                        data =
+                            List.filter (\s -> not (String.contains (String.toLower filterText) (String.toLower s)) && (s /= "")) d
+
+                        dataLen =
+                            List.length data
+
+                        firstFilter =
+                            m
+                                |> updateData data
+                                |> updateWithEffect (updateFilter f)
+                                |> model
+
+                        secondFilter =
+                            firstFilter
+                                |> updateWithEffect (updateFilter Filters.empty)
+                                |> model
+
+                        firstFilterLen =
+                            firstFilter |> getRows |> List.length
+
+                        secondFilterLen =
+                            secondFilter |> getRows |> List.length
+                    in
+                    ( firstFilterLen, secondFilterLen ) |> Expect.equal ( 0, dataLen )
             ]
         , describe "sort"
             [ fuzz (sortModelFuzz stubColumnName Asc) "test sorting on table when toggling already sorted column with Asc" <|
