@@ -68,7 +68,7 @@ import Csv.Encode
 import File.Download
 import Filters exposing (FilterStringPredicate, SearchFilterState, applyString, getTextValue, substring)
 import Html exposing (Attribute, Html, button, div, i, input, span, table, tbody, td, text, th, thead, tr)
-import Html.Attributes exposing (class, colspan, placeholder, rowspan, tabindex, type_, value)
+import Html.Attributes exposing (class, colspan, placeholder, rowspan, style, tabindex, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Json.Decode exposing (Value)
 import Json.Encode as Encode
@@ -555,7 +555,7 @@ filters are "outside" the table
 -}
 updateDataWithFilter : (row -> Bool) -> Model row msg -> Model row msg
 updateDataWithFilter pred (Model model) =
-    Model { model | data = List.filter pred model.data }
+    Model { model | data = List.filter pred model.initialData }
 
 
 updateFilterOptions : (FilterOptions row msg -> FilterOptions row msg) -> Model row msg -> Model row msg
@@ -769,58 +769,80 @@ view (Model ({ columns, data, options } as model)) =
 
 
 viewHeaderOptions : Options row msg -> List (Html (Msg msg))
-viewHeaderOptions { filter, refresh, csvExport } =
-    case ( filter, refresh, csvExport ) of
-        ( NoFilter, NoRefreshButton, NoCsvExportButton ) ->
+viewHeaderOptions options =
+    let
+        buttons =
+            viewHeaderButtons options
+    in
+    case options.filter of
+        NoFilter ->
+            buttons
+
+        FilterOptions (SearchInputFilter { state }) ->
+            div []
+                [ input [ class "form-control", type_ "text", placeholder "Filter...", onInput FilterInputChanged, value (getTextValue state) ] []
+                ]
+                :: buttons
+
+        FilterOptions (HtmlFilter { html, toMsg }) ->
+            Html.map toMsg html :: buttons
+
+
+viewHeaderButtons : Options row msg -> List (Html (Msg msg))
+viewHeaderButtons { refresh, csvExport } =
+    case ( refresh, csvExport ) of
+        ( NoRefreshButton, NoCsvExportButton ) ->
             []
 
-        ( NoFilter, (RefreshButtonOptions _) as option, _ ) ->
-            --FIXME: should the buttons still be aligned at the end ?
-            [ div [ class "ms-auto me-0" ] (viewCsvExportButton csvExport ++ viewRefreshButton option)
+        ( NoRefreshButton, csvOptions ) ->
+            [ div [ style "margin-left" "auto", style "margin-right" "0" ]
+                [ div [] [ viewCsvExportButton csvOptions ]
+                ]
             ]
 
-        ( NoFilter, NoRefreshButton, _ ) ->
-            [ div [ class "ms-auto me-0" ]
-                (viewCsvExportButton csvExport)
+        ( refreshOptions, NoCsvExportButton ) ->
+            [ div [ style "margin-left" "auto", style "margin-right" "0" ] [ viewRefreshButton refreshOptions ] ]
+
+        ( refreshOptions, csvOptions ) ->
+            [ div [ style "margin-left" "auto", style "display" "flex" ]
+                [ div [ style "margin-right" ".5rem" ]
+                    [ div [] [ viewCsvExportButton csvOptions ] ]
+                , viewRefreshButton refreshOptions
+                ]
             ]
 
-        -- FIXME: when there are export options, it should be a group of buttons at the end
-        ( FilterOptions (SearchInputFilter { state }), refreshOptions, csvOptions ) ->
-            input [ class "form-control", type_ "text", placeholder "Filter...", onInput FilterInputChanged, value (getTextValue state) ] []
-                :: (viewCsvExportButton csvOptions ++ viewRefreshButton refreshOptions)
 
-        ( FilterOptions (HtmlFilter { html, toMsg }), refreshOptions, csvOptions ) ->
-            Html.map toMsg html
-                :: (viewCsvExportButton csvOptions ++ viewRefreshButton refreshOptions)
-
-
-viewRefreshButton : RefreshButtonOptions msg -> List (Html (Msg msg))
+viewRefreshButton : RefreshButtonOptions msg -> Html (Msg msg)
 viewRefreshButton option =
     case option of
         NoRefreshButton ->
-            []
+            text ""
 
         RefreshButtonOptions attrs ->
-            [ button (onClick RefreshMsg :: attrs) [ i [ class "fa fa-refresh" ] [] ] ]
+            button (onClick RefreshMsg :: attrs) [ i [ class "fa fa-refresh" ] [] ]
 
 
-viewCsvExportButton : CsvExportOptions row msg -> List (Html (Msg msg))
+viewCsvExportButton : CsvExportOptions row msg -> Html (Msg msg)
 viewCsvExportButton option =
     case option of
         NoCsvExportButton ->
-            []
+            text ""
 
         CsvExportButton { btnAttributes } ->
-            [ button
-                ([ class "btn btn-primary btn-export"
+            button
+                ([ class "btn btn-primary"
                  , tabindex 0
                  , type_ "button"
                  , onClick ExportCsvMsg
                  ]
                     ++ btnAttributes
                 )
-                [ span [] [ text "Export" ] ]
-            ]
+                [ span []
+                    [ text "Export"
+                    , text " "
+                    , i [ class "fa fa-table" ] []
+                    ]
+                ]
 
 
 tableHeader : NonEmptyList.Nonempty (Column row msg) -> Sort a -> Html (Msg msg)
