@@ -1,17 +1,17 @@
-module RudderDataTableTest exposing (..)
+module RudderTableTest exposing (..)
 
 import Expect
 import Filters exposing (SearchFilterState, byValues, getTextValue)
 import Fuzz exposing (..)
-import Html exposing (div)
+import Html
 import List.Nonempty as NonEmptyList exposing (Nonempty)
 import Ordering
-import RudderDataTable exposing (..)
+import RudderTable exposing (..)
 import Test exposing (..)
 
 
 type alias Model =
-    RudderDataTable.Model String ()
+    RudderTable.Model String ()
 
 
 filterFuzz : Fuzzer SearchFilterState
@@ -72,7 +72,7 @@ filterModelFuzz filter =
                 |> andMap sortOrderFuzz
                 |> andMap (optionsFuzz filter)
     in
-    map2 RudderDataTable.init config dataFuzzer
+    map2 RudderTable.init config dataFuzzer
 
 
 sortModelFuzz : ColumnName -> SortOrder -> Fuzzer Model
@@ -85,7 +85,7 @@ sortModelFuzz sortBy sortOrder =
                 |> andMap (constant sortOrder)
                 |> andMap (optionsFuzz Filters.empty)
     in
-    map2 RudderDataTable.init config dataFuzzer
+    map2 RudderTable.init config dataFuzzer
 
 
 csvColumnFuzz : NonEmptyList.Nonempty String -> Fuzzer (NonEmptyList.Nonempty (Column row msg))
@@ -103,7 +103,7 @@ csvColumnFuzz (NonEmptyList.Nonempty head tail) =
         (sequence (List.map colNameToColumnFuzz tail))
 
 
-csvModelFuzz : NonEmptyList.Nonempty String -> String -> (row -> List String) -> List row -> Fuzzer (RudderDataTable.Model row msg)
+csvModelFuzz : NonEmptyList.Nonempty String -> String -> (row -> List String) -> List row -> Fuzzer (RudderTable.Model row msg)
 csvModelFuzz columnNames fileName entryToStringList data =
     let
         options =
@@ -117,7 +117,7 @@ csvModelFuzz columnNames fileName entryToStringList data =
                 |> andMap sortOrderFuzz
                 |> andMap (constant options)
     in
-    map2 RudderDataTable.init config (constant data)
+    map2 RudderTable.init config (constant data)
 
 
 applyFilterFuzz : Fuzzer ((String -> Bool) -> String -> Bool)
@@ -150,7 +150,7 @@ suite =
         stubColumnName =
             ColumnName "column"
     in
-    describe "RudderDataTable"
+    describe "RudderTable"
         [ describe "filters"
             [ fuzz (filterModelFuzz Filters.empty) "test filter update on table that defines a configuration to save in localStorage" <|
                 \m ->
