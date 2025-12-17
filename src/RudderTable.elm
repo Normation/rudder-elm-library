@@ -1,4 +1,4 @@
-module RudderDataTable exposing
+module RudderTable exposing
     ( Column, ColumnName(..), SortOrder(..)
     , Config, ConfigBuilder, buildConfig
     , Options, OptionsBuilder, buildOptions
@@ -192,6 +192,8 @@ The defaults should be fine, but customizations can be added and defined dependi
 -}
 type alias Customizations row msg =
     { tableContainerAttrs : List (Attribute (Msg msg))
+    , tableAttrs : List (Attribute (Msg msg))
+    , optionsHeaderAttrs : List (Attribute (Msg msg))
 
     -- , caption : Maybe (HtmlDetails msg)
     , theadAttrs : List (Attribute (Msg msg))
@@ -374,6 +376,8 @@ defaultOptions =
 defaultCustomizations : Customizations row msg
 defaultCustomizations =
     { tableContainerAttrs = []
+    , tableAttrs = []
+    , optionsHeaderAttrs = []
 
     -- , caption = Nothing
     , theadAttrs = []
@@ -750,7 +754,7 @@ view (Model ({ columns, data, options } as model)) =
             options.customizations.tableContainerAttrs
 
         tableView =
-            table [ class "no-footer dataTable" ]
+            table options.customizations.tableAttrs
                 [ thead theadAttrs [ tableHeader columns model ]
                 , tbody tbodyAttrs (tableBody columns data)
                 ]
@@ -761,7 +765,7 @@ view (Model ({ columns, data, options } as model)) =
                     [ tableView ]
 
                 elems ->
-                    [ div [ class "dataTables_wrapper_top d-flex justify-content-between" ] elems
+                    [ div options.customizations.optionsHeaderAttrs elems
                     , tableView
                     ]
     in

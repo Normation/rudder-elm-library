@@ -5,7 +5,7 @@
     "license": "GPL-3.0",
     "version": "0.1.0",
     "exposed-modules": [
-        "RudderDataTable",
+        "RudderTable",
         "RudderTree",
         "RudderSearchFilter",
         "Filters"
