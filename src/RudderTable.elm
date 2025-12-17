@@ -318,6 +318,7 @@ type alias ConfigBuilder row msg =
 -}
 type alias OptionsBuilder row msg =
     { newOptions : Options row msg
+    , withCustomizations : Customizations row msg -> Options row msg -> Options row msg
     , withRefresh : List (Attribute (Msg msg)) -> Options row msg -> Options row msg
     , withStorage : StorageOptionsConfig msg -> Options row msg -> Options row msg
     , withFilter : FilterOptionsType row msg -> Options row msg -> Options row msg
@@ -341,6 +342,7 @@ buildConfig =
 buildOptions : OptionsBuilder row msg
 buildOptions =
     { newOptions = defaultOptions
+    , withCustomizations = \opt -> \state -> { state | customizations = opt }
     , withRefresh = \opt -> \state -> { state | refresh = RefreshButtonOptions opt }
     , withStorage = \opt -> \state -> { state | storage = StorageOptions opt }
     , withFilter = \opt -> \state -> { state | filter = FilterOptions opt }
