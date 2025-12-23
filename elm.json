@@ -22,6 +22,9 @@
         "mgold/elm-nonempty-list": "4.2.0 <= v < 5.0.0"
     },
     "test-dependencies": {
-        "elm-explorations/test": "2.2.0 <= v < 3.0.0"
+        "avh4/elm-program-test": "4.0.0 <= v < 5.0.0",
+        "elm-explorations/test": "2.2.0 <= v < 3.0.0",
+        "elm/browser": "1.0.2 <= v < 2.0.0",
+        "elm/url": "1.0.0 <= v < 2.0.0"
     }
 }
