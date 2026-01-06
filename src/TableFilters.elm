@@ -1,4 +1,4 @@
-module Filters exposing
+module TableFilters exposing
     ( SearchFilterState, empty, substring
     , getTextValue
     , FilterStringPredicate, byValues

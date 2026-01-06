@@ -66,7 +66,6 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 
 import Csv.Encode
 import File.Download
-import Filters exposing (FilterStringPredicate, SearchFilterState, applyString, getTextValue, substring)
 import Html exposing (Attribute, Html, button, div, i, input, span, table, tbody, td, text, th, thead, tr)
 import Html.Attributes exposing (class, colspan, placeholder, rowspan, style, tabindex, type_, value)
 import Html.Events exposing (onClick, onInput)
@@ -75,6 +74,7 @@ import Json.Encode as Encode
 import List.Extra
 import List.Nonempty as NonEmptyList
 import Ordering exposing (Ordering)
+import TableFilters exposing (FilterStringPredicate, SearchFilterState, applyString, getTextValue, substring)
 
 
 {-| ATTENTION !

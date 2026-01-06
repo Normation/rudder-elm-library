@@ -1,12 +1,12 @@
 module RudderTableTest exposing (..)
 
 import Expect
-import Filters exposing (SearchFilterState, byValues, getTextValue)
 import Fuzz exposing (..)
 import Html
 import List.Nonempty as NonEmptyList exposing (Nonempty)
 import Ordering
 import RudderTable exposing (..)
+import TableFilters exposing (SearchFilterState, byValues, getTextValue)
 import Test exposing (..)
 
 
@@ -16,18 +16,18 @@ type alias Model =
 
 filterFuzz : Fuzzer SearchFilterState
 filterFuzz =
-    oneOf [ constant Filters.empty, substringFilterFuzz ]
+    oneOf [ constant TableFilters.empty, substringFilterFuzz ]
 
 
 substringFilterFuzz : Fuzzer SearchFilterState
 substringFilterFuzz =
     -- Filter without space, because filter is trimmed
-    map Filters.substring (map String.fromList (list (intRange 33 126 |> map Char.fromCode)))
+    map TableFilters.substring (map String.fromList (list (intRange 33 126 |> map Char.fromCode)))
 
 
 nonEmptySubstringFilterFuzz : Fuzzer SearchFilterState
 nonEmptySubstringFilterFuzz =
-    map Filters.substring (map String.fromList (listOfLengthBetween 1 32 (intRange 33 126 |> map Char.fromCode)))
+    map TableFilters.substring (map String.fromList (listOfLengthBetween 1 32 (intRange 33 126 |> map Char.fromCode)))
 
 
 columnNameFuzz : Fuzzer ColumnName
@@ -83,7 +83,7 @@ sortModelFuzz sortBy sortOrder =
                 |> andMap (constant (NonEmptyList.singleton { name = sortBy, renderHtml = \_ -> Html.text "", ordering = Ordering.natural }))
                 |> andMap (constant sortBy)
                 |> andMap (constant sortOrder)
-                |> andMap (optionsFuzz Filters.empty)
+                |> andMap (optionsFuzz TableFilters.empty)
     in
     map2 RudderTable.init config dataFuzzer
 
@@ -145,14 +145,14 @@ suite =
             a
 
         stubFilter =
-            Filters.substring "test"
+            TableFilters.substring "test"
 
         stubColumnName =
             ColumnName "column"
     in
     describe "RudderTable"
         [ describe "filters"
-            [ fuzz (filterModelFuzz Filters.empty) "test filter update on table that defines a configuration to save in localStorage" <|
+            [ fuzz (filterModelFuzz TableFilters.empty) "test filter update on table that defines a configuration to save in localStorage" <|
                 \m ->
                     let
                         options =
@@ -164,9 +164,9 @@ suite =
                                 |> Maybe.withDefault (\_ -> Expect.fail "initial model was not configured to save to local storage, please fix the stub fuzz")
                     in
                     updateWithEffect (updateFilter stubFilter) m |> effect |> expectation
-            , fuzz (filterModelFuzz Filters.empty) "test filter on table that got updated with a new filter" <|
+            , fuzz (filterModelFuzz TableFilters.empty) "test filter on table that got updated with a new filter" <|
                 \m -> updateWithEffect (updateFilter stubFilter) m |> model |> getFilterOptionValue |> Expect.equal "test"
-            , fuzz3 (filterModelFuzz Filters.empty) dataFuzzer substringFilterFuzz "test filter on table when filter matches all entries" <|
+            , fuzz3 (filterModelFuzz TableFilters.empty) dataFuzzer substringFilterFuzz "test filter on table when filter matches all entries" <|
                 \m d f ->
                     let
                         dataLen =
@@ -186,7 +186,7 @@ suite =
                         |> getRows
                         |> List.length
                         |> Expect.equal dataLen
-            , fuzz3 (filterModelFuzz Filters.empty) dataFuzzer nonEmptySubstringFilterFuzz "test empty filter on table after applying filter that doesn't match some entries" <|
+            , fuzz3 (filterModelFuzz TableFilters.empty) dataFuzzer nonEmptySubstringFilterFuzz "test empty filter on table after applying filter that doesn't match some entries" <|
                 \m d f ->
                     let
                         filterText =
@@ -206,7 +206,7 @@ suite =
 
                         secondFilter =
                             firstFilter
-                                |> updateWithEffect (updateFilter Filters.empty)
+                                |> updateWithEffect (updateFilter TableFilters.empty)
                                 |> model
 
                         firstFilterLen =

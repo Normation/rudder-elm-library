@@ -24,10 +24,10 @@ It will be useful to handle `OutMsg` public message upon change of the filter.
 
 -}
 
-import Filters exposing (FilterStringPredicate, SearchFilterState, applyString, getTextValue, substring)
 import Html exposing (Html, input)
 import Html.Attributes exposing (class, placeholder, type_, value)
 import Html.Events exposing (onInput)
+import TableFilters exposing (FilterStringPredicate, SearchFilterState, applyString, getTextValue, substring)
 
 
 {-| The model of a search input filter. Here the will be always the same, and the state represents the input search.
@@ -57,7 +57,7 @@ type OutMsg data
 -}
 init : FilterStringPredicate data -> Model data
 init predicate =
-    Model predicate Filters.empty
+    Model predicate TableFilters.empty
 
 
 
