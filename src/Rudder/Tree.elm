@@ -1,4 +1,4 @@
-module RudderTree exposing
+module Rudder.Tree exposing
     ( TreeNodeId, TreeNode, ViewTree(..), BranchFoldStatus(..)
     , sortTree
     , Model, Msg

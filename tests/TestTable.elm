@@ -1,12 +1,12 @@
-module RudderTableTest exposing (..)
+module TestTable exposing (..)
 
 import Expect
-import Filters exposing (SearchFilterState, byValues, getTextValue)
 import Fuzz exposing (..)
 import Html
 import List.Nonempty as NonEmptyList exposing (Nonempty)
 import Ordering
-import RudderTable exposing (..)
+import Rudder.Filters as Filters exposing (SearchFilterState, byValues, getTextValue)
+import Rudder.Table as RudderTable exposing (..)
 import Test exposing (..)
 
 
@@ -108,7 +108,11 @@ csvModelFuzz columnNames fileName entryToStringList data =
     let
         options =
             buildOptions.newOptions
-                |> buildOptions.withCsvExport { fileName = fileName, entryToStringList = entryToStringList, btnAttributes = [] }
+                |> buildOptions.withCsvExport
+                    { fileName = fileName
+                    , entryToStringList = entryToStringList
+                    , btnAttributes = []
+                    }
 
         config =
             constant Config
@@ -150,7 +154,7 @@ suite =
         stubColumnName =
             ColumnName "column"
     in
-    describe "RudderTable"
+    describe "Rudder.Table"
         [ describe "filters"
             [ fuzz (filterModelFuzz Filters.empty) "test filter update on table that defines a configuration to save in localStorage" <|
                 \m ->

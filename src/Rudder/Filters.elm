@@ -1,4 +1,4 @@
-module Filters exposing
+module Rudder.Filters exposing
     ( SearchFilterState, empty, substring
     , getTextValue
     , FilterStringPredicate, byValues
