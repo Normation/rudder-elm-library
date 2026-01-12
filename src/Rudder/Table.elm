@@ -18,6 +18,7 @@ module Rudder.Table exposing
     , sortColumn
     , storageOptions, getFilterOptionValue, getRows, getSort
     , exportCsv
+    , emptyMsg
     -- the internal message type, we never want to expose it with Msg(..)
     -- for testing the updates
     )
@@ -65,13 +66,14 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 @docs sortColumn
 @docs storageOptions, getFilterOptionValue, getRows, getSort
 @docs exportCsv
+@docs emptyMsg
 
 -}
 
 import Csv.Encode
 import File.Download
 import Html exposing (Attribute, Html, button, div, i, input, span, table, tbody, td, text, th, thead, tr)
-import Html.Attributes exposing (class, colspan, placeholder, rowspan, style, tabindex, type_, value)
+import Html.Attributes exposing (attribute, class, colspan, id, placeholder, rowspan, style, tabindex, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Json.Decode exposing (Value)
 import Json.Encode as Encode
@@ -262,6 +264,7 @@ type Msg parentMsg
     | ExportCsvRequest
     | ExportCsvMsg String
     | ParentMsg parentMsg
+    | EmptyMsg
 
 
 {-| The public message to be exposed to parent components
@@ -529,6 +532,9 @@ updateWithEffect msg (Model model) =
             -- FIXME: do we know the effects ?
             ( Model model, [], Just (OnHtml m) )
 
+        EmptyMsg ->
+            ( Model model, [], Nothing )
+
 
 updateOnFilterInput : SearchFilterState -> Model row msg -> ( Model row msg, List (Effect msg) )
 updateOnFilterInput newFilterState (Model model) =
@@ -626,6 +632,13 @@ updateFilter =
 exportCsv : String -> Msg msg
 exportCsv =
     ExportCsvMsg
+
+
+{-| Internal "empty" Msg, used for testing
+-}
+emptyMsg : Msg msg
+emptyMsg =
+    EmptyMsg
 
 
 
@@ -806,7 +819,16 @@ viewHeaderOptions options =
 
         FilterOptions (SearchInputFilter { state }) ->
             div []
-                [ input [ class "form-control", type_ "text", placeholder "Filter...", onInput FilterInputChanged, value (getTextValue state) ] []
+                [ input
+                    [ class "form-control"
+                    , type_ "text"
+                    , placeholder "Filter..."
+                    , onInput FilterInputChanged
+                    , id "SearchFilter"
+                    , attribute "aria-label" "Search Filter"
+                    , value (getTextValue state)
+                    ]
+                    []
                 ]
                 :: buttons
 
@@ -845,7 +867,8 @@ viewRefreshButton option =
             text ""
 
         RefreshButtonOptions attrs ->
-            button (onClick RefreshMsg :: attrs) [ i [ class "fa fa-refresh" ] [] ]
+            button (onClick RefreshMsg :: attribute "aria-label" "Refresh" :: attrs)
+                [ i [ class "fa fa-refresh" ] [] ]
 
 
 viewCsvExportButtonOption : CsvExportOptions row msg -> Html (Msg msg)
@@ -857,6 +880,7 @@ viewCsvExportButtonOption option =
         CsvExportButton { btnAttributes } ->
             button
                 ([ class "btn btn-primary"
+                 , attribute "aria-label" "Export CSV"
                  , tabindex 0
                  , type_ "button"
                  , onClick ExportCsvRequest
