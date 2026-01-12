@@ -103,14 +103,13 @@ csvColumnFuzz (NonEmptyList.Nonempty head tail) =
         (sequence (List.map colNameToColumnFuzz tail))
 
 
-csvModelFuzz : NonEmptyList.Nonempty String -> String -> (row -> List String) -> List row -> Fuzzer (RudderTable.Model row msg)
-csvModelFuzz columnNames fileName entryToStringList data =
+csvModelFuzz : NonEmptyList.Nonempty String -> (row -> List String) -> List row -> Fuzzer (RudderTable.Model row msg)
+csvModelFuzz columnNames entryToStringList data =
     let
         options =
             buildOptions.newOptions
                 |> buildOptions.withCsvExport
-                    { fileName = fileName
-                    , entryToStringList = entryToStringList
+                    { entryToStringList = entryToStringList
                     , btnAttributes = []
                     }
 
@@ -241,22 +240,21 @@ suite =
             [ fuzz (nonEmptyListFuzzer columnFuzz) "test csv export on empty table that does not define a csv export configuration" <|
                 \c ->
                     init (buildConfig.newConfig c) []
-                        |> updateWithEffect exportCsv
+                        |> updateWithEffect (exportCsv "filename")
                         |> effect
                         |> Expect.equal [ IgnoreExportCsvMsgNoConfig ]
             , fuzz
-                (csvModelFuzz (NonEmptyList.Nonempty "name" []) "myFile" (\row -> row) [])
+                (csvModelFuzz (NonEmptyList.Nonempty "name" []) (\row -> row) [])
                 "test csv export on empty table that defines a csv export configuration"
               <|
                 \m ->
                     m
-                        |> updateWithEffect exportCsv
+                        |> updateWithEffect (exportCsv "myFile")
                         |> effect
                         |> Expect.equal [ DownloadTableAsCsv (CsvExportData "myFile" "") ]
             , fuzz
                 (csvModelFuzz
                     (NonEmptyList.Nonempty "name" [ "age" ])
-                    "otherFile"
                     (\{ a, b } -> [ a, String.fromInt b ])
                     [ { a = "Alice", b = 45 }, { a = "Bob", b = 37 } ]
                 )
@@ -264,13 +262,12 @@ suite =
               <|
                 \m ->
                     m
-                        |> updateWithEffect exportCsv
+                        |> updateWithEffect (exportCsv "otherFile")
                         |> effect
                         |> Expect.equal [ DownloadTableAsCsv (CsvExportData "otherFile" "name,age\u{000D}\nAlice,45\u{000D}\nBob,37") ]
             , fuzz
                 (csvModelFuzz
                     (NonEmptyList.Nonempty "\"Name\"" [ "Age,probably" ])
-                    "yetAnotherFile"
                     (\{ a, b } -> [ a, String.fromInt b ])
                     [ { a = "\"Al\"ice\"", b = 45 }
                     , { a = "Bo,b", b = 37 }
@@ -281,7 +278,7 @@ suite =
               <|
                 \m ->
                     m
-                        |> updateWithEffect exportCsv
+                        |> updateWithEffect (exportCsv "yetAnotherFile")
                         |> effect
                         |> Expect.equal [ DownloadTableAsCsv (CsvExportData "yetAnotherFile" "\"\"\"Name\"\"\",\"Age,probably\"\u{000D}\n\"\"\"Al\"\"ice\"\"\",45\u{000D}\n\"Bo,b\",37\u{000D}\n\"\nEve\",28") ]
             ]

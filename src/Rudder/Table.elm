@@ -9,9 +9,11 @@ module Rudder.Table exposing
     , CsvExportData
     , CsvExportConfig, CsvExportOptions
     , updateData, updateFilter, updateDataWithFilter
+    , updateExportToCsv
     , Model, Msg
     , view, update, init
     , OutMsg(..)
+    , viewCsvExportButton
     , Effect(..), updateWithEffect
     , sortColumn
     , storageOptions, getFilterOptionValue, getRows, getSort
@@ -46,6 +48,7 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 # State-changing functions
 
 @docs updateData, updateFilter, updateDataWithFilter
+@docs updateExportToCsv
 
 
 # Common TEA
@@ -53,6 +56,7 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 @docs Model, Msg
 @docs view, update, init
 @docs OutMsg
+@docs viewCsvExportButton
 
 
 # Testing only
@@ -171,7 +175,7 @@ type alias StorageOptionsConfig msg =
 {-| CSV export configuration
 -}
 type alias CsvExportConfig row parentMsg =
-    { fileName : String, entryToStringList : row -> List String, btnAttributes : List (Attribute (Msg parentMsg)) }
+    { entryToStringList : row -> List String, btnAttributes : List (Attribute (Msg parentMsg)) }
 
 
 {-| Options for CSV export support of a given table
@@ -184,7 +188,7 @@ type CsvExportOptions row msg
 {-| Datatype that represents the result of exporting a table to CSV
 -}
 type alias CsvExportData =
-    { fileName : String, csv : String }
+    { filename : String, csv : String }
 
 
 {-| Table display customizations for adding custom HTML attributes, e.g. `class` to parts of the table.
@@ -255,15 +259,17 @@ type Msg parentMsg
     | RefreshMsg
     | FilterInputChanged String
     | UpdateFilterMsg SearchFilterState
-    | ExportCsvMsg
+    | ExportCsvRequest
+    | ExportCsvMsg String
     | ParentMsg parentMsg
 
 
 {-| The public message to be exposed to parent components
 -}
 type OutMsg parentMsg
-    = Refresh
+    = RefreshRequested
     | OnHtml parentMsg
+    | CsvExportRequested
 
 
 {-| A representation of concrete effects in the type system to allow testing
@@ -461,13 +467,24 @@ interpret =
                 SaveFilterInLocalStorage key filter cb ->
                     cb (encodeStorageEffect key filter)
 
-                DownloadTableAsCsv { fileName, csv } ->
-                    File.Download.string fileName "text/csv" csv
+                DownloadTableAsCsv { filename, csv } ->
+                    File.Download.string filename "text/csv" csv
 
                 IgnoreExportCsvMsgNoConfig ->
                     Cmd.none
         )
         >> Cmd.batch
+
+
+{-| Update function to call in order to send the an "Export to CSV" Msg from the parent component
+-}
+updateExportToCsv : Model row msg -> String -> ( Model row msg, Cmd msg, Maybe (OutMsg msg) )
+updateExportToCsv model filename =
+    let
+        ( updatedModel, effect, outMsg ) =
+            updateWithEffect (ExportCsvMsg filename) model
+    in
+    ( updatedModel, interpret effect, outMsg )
 
 
 {-| Concrete implementation of the update loop, using the [effect] pattern.
@@ -485,7 +502,7 @@ updateWithEffect msg (Model model) =
 
         RefreshMsg ->
             -- FIXME: disable button
-            ( Model model, [], Just Refresh )
+            ( Model model, [], Just RefreshRequested )
 
         FilterInputChanged s ->
             updateWithEffect (UpdateFilterMsg (substring s)) (Model model)
@@ -497,10 +514,13 @@ updateWithEffect msg (Model model) =
             in
             ( newModel, effects, Nothing )
 
-        ExportCsvMsg ->
+        ExportCsvRequest ->
+            ( Model model, [], Just CsvExportRequested )
+
+        ExportCsvMsg filename ->
             case model.options.csvExport of
                 CsvExportButton csvExportConfig ->
-                    ( Model model, [ DownloadTableAsCsv (tableToCsv (Model model) csvExportConfig) ], Nothing )
+                    ( Model model, [ DownloadTableAsCsv (tableToCsv (Model model) csvExportConfig filename) ], Nothing )
 
                 NoCsvExportButton ->
                     ( Model model, [ IgnoreExportCsvMsgNoConfig ], Nothing )
@@ -603,7 +623,7 @@ updateFilter =
 
 {-| Internal Msg that produces the CSV export event; used in tests
 -}
-exportCsv : Msg msg
+exportCsv : String -> Msg msg
 exportCsv =
     ExportCsvMsg
 
@@ -689,8 +709,8 @@ storageValueTypeText valueType =
 
 {-| Table to CSV export function
 -}
-tableToCsv : Model row msg -> CsvExportConfig row msg -> CsvExportData
-tableToCsv (Model model) { fileName, entryToStringList } =
+tableToCsv : Model row msg -> CsvExportConfig row msg -> String -> CsvExportData
+tableToCsv (Model model) { entryToStringList } filename =
     let
         -- first row contains column names
         columns : List String
@@ -711,7 +731,7 @@ tableToCsv (Model model) { fileName, entryToStringList } =
                     (\entry -> List.map2 Tuple.pair columns entry)
             , fieldSeparator = ','
             }
-        |> CsvExportData fileName
+        |> CsvExportData filename
 
 
 
@@ -802,7 +822,7 @@ viewHeaderButtons { refresh, csvExport } =
 
         ( NoRefreshButton, csvOptions ) ->
             [ div [ style "margin-left" "auto", style "margin-right" "0" ]
-                [ div [] [ viewCsvExportButton csvOptions ]
+                [ div [] [ viewCsvExportButtonOption csvOptions ]
                 ]
             ]
 
@@ -812,7 +832,7 @@ viewHeaderButtons { refresh, csvExport } =
         ( refreshOptions, csvOptions ) ->
             [ div [ style "margin-left" "auto", style "display" "flex" ]
                 [ div [ style "margin-right" ".5rem" ]
-                    [ div [] [ viewCsvExportButton csvOptions ] ]
+                    [ div [] [ viewCsvExportButtonOption csvOptions ] ]
                 , viewRefreshButton refreshOptions
                 ]
             ]
@@ -828,8 +848,8 @@ viewRefreshButton option =
             button (onClick RefreshMsg :: attrs) [ i [ class "fa fa-refresh" ] [] ]
 
 
-viewCsvExportButton : CsvExportOptions row msg -> Html (Msg msg)
-viewCsvExportButton option =
+viewCsvExportButtonOption : CsvExportOptions row msg -> Html (Msg msg)
+viewCsvExportButtonOption option =
     case option of
         NoCsvExportButton ->
             text ""
@@ -839,7 +859,7 @@ viewCsvExportButton option =
                 ([ class "btn btn-primary"
                  , tabindex 0
                  , type_ "button"
-                 , onClick ExportCsvMsg
+                 , onClick ExportCsvRequest
                  ]
                     ++ btnAttributes
                 )
@@ -849,6 +869,13 @@ viewCsvExportButton option =
                     , i [ class "fa fa-table" ] []
                     ]
                 ]
+
+
+{-| View for the CSV export button in case the button should be displayed outside of the table
+-}
+viewCsvExportButton : Model row msg -> Html (Msg msg)
+viewCsvExportButton (Model model) =
+    viewCsvExportButtonOption model.options.csvExport
 
 
 tableHeader : NonEmptyList.Nonempty (Column row msg) -> Sort a -> Html (Msg msg)
