@@ -197,16 +197,20 @@ type alias CsvExportData =
 The defaults should be fine, but customizations can be added and defined depending on each case.
 -}
 type alias Customizations row msg =
-    { tableContainerAttrs : List (Attribute (Msg msg))
-    , tableAttrs : List (Attribute (Msg msg))
-    , optionsHeaderAttrs : List (Attribute (Msg msg))
+    { tableContainerAttrs : List (Attribute msg)
+    , tableAttrs : List (Attribute msg)
+    , optionsHeaderAttrs : List (Attribute msg)
 
     -- , caption : Maybe (HtmlDetails msg)
-    , theadAttrs : List (Attribute (Msg msg))
+    , theadAttrs : List (Attribute msg)
 
     -- , tfoot : Maybe (HtmlDetails msg)
-    , tbodyAttrs : List (Attribute (Msg msg))
-    , rowAttrs : row -> List (Attribute (Msg msg))
+    , tbodyAttrs : List (Attribute msg)
+    , trAttrs : row -> List (Attribute msg)
+
+    -- column-specific attributes
+    , thAttrs : ColumnName -> List (Attribute msg)
+    , tdAttrs : ColumnName -> List (Attribute msg)
     }
 
 
@@ -395,7 +399,11 @@ defaultCustomizations =
 
     -- , tfoot = Nothing
     , tbodyAttrs = []
-    , rowAttrs = \_ -> []
+    , trAttrs = \_ -> []
+
+    -- column-specific attributes
+    , thAttrs = \_ -> []
+    , tdAttrs = \_ -> []
     }
 
 
@@ -774,24 +782,29 @@ encodeStorageEffect key filter =
 {- VIEW -}
 
 
+mapAttributes : List (Attribute msg) -> List (Attribute (Msg msg))
+mapAttributes =
+    List.map (Html.Attributes.map ParentMsg)
+
+
 {-| The main view function for the table
 -}
 view : Model row msg -> Html (Msg msg)
 view (Model ({ columns, data, options } as model)) =
     let
         theadAttrs =
-            options.customizations.theadAttrs
+            options.customizations.theadAttrs |> mapAttributes
 
         tbodyAttrs =
-            options.customizations.tbodyAttrs
+            options.customizations.tbodyAttrs |> mapAttributes
 
         tableContainerAttrs =
-            options.customizations.tableContainerAttrs
+            options.customizations.tableContainerAttrs |> mapAttributes
 
         tableView =
-            table options.customizations.tableAttrs
-                [ thead theadAttrs [ tableHeader columns model ]
-                , tbody tbodyAttrs (tableBody columns data)
+            table (options.customizations.tableAttrs |> mapAttributes)
+                [ thead theadAttrs [ tableHeader columns model options.customizations.thAttrs ]
+                , tbody tbodyAttrs (tableBody columns data options.customizations.trAttrs options.customizations.tdAttrs)
                 ]
 
         content =
@@ -800,7 +813,7 @@ view (Model ({ columns, data, options } as model)) =
                     [ tableView ]
 
                 elems ->
-                    [ div options.customizations.optionsHeaderAttrs elems
+                    [ div (options.customizations.optionsHeaderAttrs |> mapAttributes) elems
                     , tableView
                     ]
     in
@@ -902,20 +915,26 @@ viewCsvExportButton (Model model) =
     viewCsvExportButtonOption model.options.csvExport
 
 
-tableHeader : NonEmptyList.Nonempty (Column row msg) -> Sort a -> Html (Msg msg)
-tableHeader columns sort =
+tableHeader : NonEmptyList.Nonempty (Column row msg) -> Sort a -> (ColumnName -> List (Attribute msg)) -> Html (Msg msg)
+tableHeader columns sort thAttrsFun =
     tr [ class "head" ]
         (columns
             |> NonEmptyList.toList
             |> List.map (\column -> ( column.name, thClass sort column.name ))
             |> List.map
                 (\( ColumnName name, thClassValue ) ->
+                    let
+                        thAttrs =
+                            thAttrsFun (ColumnName name)
+                    in
                     th
-                        [ class thClassValue
-                        , rowspan 1
-                        , colspan 1
-                        , onClick (SortColumn (ColumnName name))
-                        ]
+                        ([ class thClassValue
+                         , rowspan 1
+                         , colspan 1
+                         , onClick (SortColumn (ColumnName name))
+                         ]
+                            ++ mapAttributes thAttrs
+                        )
                         [ text name ]
                 )
         )
@@ -935,15 +954,19 @@ thClass { sortBy, sortOrder } columnName =
         "sorting"
 
 
-tableBody : NonEmptyList.Nonempty (Column row msg) -> List row -> List (Html (Msg msg))
-tableBody columns data =
+tableBody : NonEmptyList.Nonempty (Column row msg) -> List row -> (row -> List (Attribute msg)) -> (ColumnName -> List (Attribute msg)) -> List (Html (Msg msg))
+tableBody columns data trAttrs tdAttrs =
     let
         rowTable n =
-            tr []
+            tr (mapAttributes (trAttrs n))
                 (columns
                     |> NonEmptyList.toList
-                    |> List.map (\{ renderHtml } -> Html.map ParentMsg (n |> renderHtml))
-                    |> List.map (\s -> td [] [ s ])
+                    |> List.map
+                        (\{ name, renderHtml } ->
+                            td
+                                (mapAttributes (tdAttrs name))
+                                [ Html.map ParentMsg (n |> renderHtml) ]
+                        )
                 )
     in
     if List.length data > 0 then
