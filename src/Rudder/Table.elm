@@ -857,7 +857,7 @@ viewHeaderButtons { refresh, csvExport } =
 
         ( NoRefreshButton, csvOptions ) ->
             [ div [ style "margin-left" "auto", style "margin-right" "0" ]
-                [ div [] [ viewCsvExportButtonOption csvOptions ]
+                [ div [] [ viewCsvExportButton csvOptions ]
                 ]
             ]
 
@@ -867,7 +867,7 @@ viewHeaderButtons { refresh, csvExport } =
         ( refreshOptions, csvOptions ) ->
             [ div [ style "margin-left" "auto", style "display" "flex" ]
                 [ div [ style "margin-right" ".5rem" ]
-                    [ div [] [ viewCsvExportButtonOption csvOptions ] ]
+                    [ div [] [ viewCsvExportButton csvOptions ] ]
                 , viewRefreshButton refreshOptions
                 ]
             ]
@@ -884,9 +884,11 @@ viewRefreshButton option =
                 [ i [ class "fa fa-refresh" ] [] ]
 
 
-viewCsvExportButtonOption : CsvExportOptions row msg -> Html (Msg msg)
-viewCsvExportButtonOption option =
-    case option of
+{-| View for the CSV export button in case the button should be displayed outside of the table
+-}
+viewCsvExportButton : CsvExportOptions row msg -> Html (Msg msg)
+viewCsvExportButton options =
+    case options of
         NoCsvExportButton ->
             text ""
 
@@ -906,13 +908,6 @@ viewCsvExportButtonOption option =
                     , i [ class "fa fa-table" ] []
                     ]
                 ]
-
-
-{-| View for the CSV export button in case the button should be displayed outside of the table
--}
-viewCsvExportButton : Model row msg -> Html (Msg msg)
-viewCsvExportButton (Model model) =
-    viewCsvExportButtonOption model.options.csvExport
 
 
 tableHeader : NonEmptyList.Nonempty (Column row msg) -> Sort a -> (ColumnName -> List (Attribute msg)) -> Html (Msg msg)
