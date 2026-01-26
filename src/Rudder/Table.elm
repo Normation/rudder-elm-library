@@ -5,7 +5,7 @@ module Rudder.Table exposing
     , FilterOptions, FilterOptionsType(..)
     , RefreshButtonOptions(..)
     , StorageOptions, StorageOptionsConfig, StorageKey
-    , Customizations
+    , Customizations, CustomizationsBuilder, buildCustomizations
     , CsvExportData
     , CsvExportConfig, CsvExportOptions
     , updateData, updateFilter, updateDataWithFilter
@@ -41,7 +41,7 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 @docs FilterOptions, FilterOptionsType
 @docs RefreshButtonOptions
 @docs StorageOptions, StorageOptionsConfig, StorageKey
-@docs Customizations
+@docs Customizations, CustomizationsBuilder, buildCustomizations
 @docs CsvExportData
 @docs CsvExportConfig, CsvExportOptions
 
@@ -291,7 +291,7 @@ type Effect parentMsg
 {- BUILDERS -}
 
 
-{-| The builder DSL for the config. It allows creating the custom configuration you want for you table :
+{-| The builder DSL for the config. It allows creating the custom configuration you want for your table :
 
   - with mandatory columns, and predicate to filter rows (since the logic of filtering must exist in our table)
   - all the options you want and initial values
@@ -339,6 +339,21 @@ type alias OptionsBuilder row msg =
     }
 
 
+{-| Builder DSL for table customizations
+-}
+type alias CustomizationsBuilder row msg =
+    { newCustomizations : Customizations row msg
+    , withTableContainerAttrs : List (Attribute msg) -> Customizations row msg -> Customizations row msg
+    , withTableAttrs : List (Attribute msg) -> Customizations row msg -> Customizations row msg
+    , withOptionsHeaderAttrs : List (Attribute msg) -> Customizations row msg -> Customizations row msg
+    , withTheadAttrs : List (Attribute msg) -> Customizations row msg -> Customizations row msg
+    , withTbodyAttrs : List (Attribute msg) -> Customizations row msg -> Customizations row msg
+    , withTrAttrs : (row -> List (Attribute msg)) -> Customizations row msg -> Customizations row msg
+    , withThAttrs : (ColumnName -> List (Attribute msg)) -> Customizations row msg -> Customizations row msg
+    , withTdAttrs : (ColumnName -> List (Attribute msg)) -> Customizations row msg -> Customizations row msg
+    }
+
+
 {-| Builder to obtain a table configuration
 -}
 buildConfig : ConfigBuilder row msg
@@ -360,6 +375,22 @@ buildOptions =
     , withStorage = \opt -> \state -> { state | storage = StorageOptions opt }
     , withFilter = \opt -> \state -> { state | filter = FilterOptions opt }
     , withCsvExport = \opt -> \state -> { state | csvExport = CsvExportButton opt }
+    }
+
+
+{-| Builder for table customizations
+-}
+buildCustomizations : CustomizationsBuilder row msg
+buildCustomizations =
+    { newCustomizations = defaultCustomizations
+    , withTableContainerAttrs = \custom -> \state -> { state | tableContainerAttrs = custom }
+    , withTableAttrs = \custom -> \state -> { state | tableAttrs = custom }
+    , withOptionsHeaderAttrs = \custom -> \state -> { state | optionsHeaderAttrs = custom }
+    , withTheadAttrs = \custom -> \state -> { state | theadAttrs = custom }
+    , withTbodyAttrs = \custom -> \state -> { state | tbodyAttrs = custom }
+    , withTrAttrs = \custom -> \state -> { state | trAttrs = custom }
+    , withThAttrs = \custom -> \state -> { state | thAttrs = custom }
+    , withTdAttrs = \custom -> \state -> { state | tdAttrs = custom }
     }
 
 
