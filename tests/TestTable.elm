@@ -3,6 +3,7 @@ module TestTable exposing (..)
 import Expect
 import Fuzz exposing (..)
 import Html
+import List.Extra
 import List.Nonempty as NonEmptyList exposing (Nonempty)
 import Ordering
 import Rudder.Filters as Filters exposing (SearchFilterState, byValues, getTextValue)
@@ -32,7 +33,18 @@ nonEmptySubstringFilterFuzz =
 
 columnNameFuzz : Fuzzer ColumnName
 columnNameFuzz =
-    map ColumnName string
+    map ColumnName <|
+        (stringOfLengthBetween 5 10
+            |> Fuzz.filterMap
+                (\s ->
+                    case String.trim s of
+                        "" ->
+                            Nothing
+
+                        nonBlank ->
+                            Just nonBlank
+                )
+        )
 
 
 columnFuzz : Fuzzer (Column String ())
@@ -46,6 +58,11 @@ columnFuzz =
 nonEmptyListFuzzer : Fuzzer a -> Fuzzer (NonEmptyList.Nonempty a)
 nonEmptyListFuzzer aFuzz =
     map2 NonEmptyList.Nonempty aFuzz (list aFuzz)
+
+
+nonEmptyListOfLengthBetweenFuzzer : Int -> Int -> Fuzzer a -> Fuzzer (NonEmptyList.Nonempty a)
+nonEmptyListOfLengthBetweenFuzzer lo hi aFuzz =
+    map2 NonEmptyList.Nonempty aFuzz (listOfLengthBetween lo hi aFuzz)
 
 
 sortOrderFuzz : Fuzzer SortOrder
@@ -75,12 +92,12 @@ filterModelFuzz filter =
     map2 RudderTable.init config dataFuzzer
 
 
-sortModelFuzz : ColumnName -> SortOrder -> Fuzzer Model
-sortModelFuzz sortBy sortOrder =
+sortModelFuzz : Fuzzer (Nonempty (Column String ())) -> ColumnName -> SortOrder -> Fuzzer Model
+sortModelFuzz columns sortBy sortOrder =
     let
         config =
             constant Config
-                |> andMap (constant (NonEmptyList.singleton { name = sortBy, renderHtml = \_ -> Html.text "", ordering = Ordering.natural }))
+                |> andMap columns
                 |> andMap (constant sortBy)
                 |> andMap (constant sortOrder)
                 |> andMap (optionsFuzz Filters.empty)
@@ -138,10 +155,31 @@ rowFuzzer =
     string
 
 
+{-| A fuzzer that shuffles the given list.
+-}
+traverseNonEmpty : (a -> Fuzzer b) -> Nonempty a -> Fuzzer (Nonempty b)
+traverseNonEmpty toFuzzer items =
+    Fuzz.constant NonEmptyList.Nonempty
+        |> Fuzz.andMap (toFuzzer <| NonEmptyList.head items)
+        |> Fuzz.andMap (sequence (List.map toFuzzer <| NonEmptyList.tail items))
+
+
+shuffledNonEmptyList : Nonempty a -> Fuzzer (Nonempty a)
+shuffledNonEmptyList items =
+    items
+        |> traverseNonEmpty (\item -> int |> map (\index -> ( index, item )))
+        |> Fuzz.map
+            (\listWithIndexes ->
+                listWithIndexes
+                    |> NonEmptyList.sortBy Tuple.first
+                    |> NonEmptyList.map Tuple.second
+            )
+
+
 suite : Test
 suite =
     let
-        model ( a, _, _ ) =
+        getModel ( a, _, _ ) =
             a
 
         effect ( _, a, _ ) =
@@ -168,7 +206,7 @@ suite =
                     in
                     updateWithEffect (updateFilter stubFilter) m |> effect |> expectation
             , fuzz (filterModelFuzz Filters.empty) "test filter on table that got updated with a new filter" <|
-                \m -> updateWithEffect (updateFilter stubFilter) m |> model |> getFilterOptionValue |> Expect.equal "test"
+                \m -> updateWithEffect (updateFilter stubFilter) m |> getModel |> getFilterOptionValue |> Expect.equal "test"
             , fuzz3 (filterModelFuzz Filters.empty) dataFuzzer substringFilterFuzz "test filter on table when filter matches all entries" <|
                 \m d f ->
                     let
@@ -185,7 +223,7 @@ suite =
                     m
                         |> updateData data
                         |> updateWithEffect (updateFilter f)
-                        |> model
+                        |> getModel
                         |> getRows
                         |> List.length
                         |> Expect.equal dataLen
@@ -205,12 +243,12 @@ suite =
                             m
                                 |> updateData data
                                 |> updateWithEffect (updateFilter f)
-                                |> model
+                                |> getModel
 
                         secondFilter =
                             firstFilter
                                 |> updateWithEffect (updateFilter Filters.empty)
-                                |> model
+                                |> getModel
 
                         firstFilterLen =
                             firstFilter |> getRows |> List.length
@@ -220,21 +258,89 @@ suite =
                     in
                     ( firstFilterLen, secondFilterLen ) |> Expect.equal ( 0, dataLen )
             ]
-        , describe "sort"
-            [ fuzz (sortModelFuzz stubColumnName Asc) "test sorting on table when toggling already sorted column with Asc" <|
-                \m -> updateWithEffect (sortColumn stubColumnName) m |> model |> getSort |> Expect.equal ( stubColumnName, Desc )
-            , fuzz (sortModelFuzz stubColumnName Desc) "test sorting on table when toggling already sorted column with Desc" <|
-                \m -> updateWithEffect (sortColumn stubColumnName) m |> model |> getSort |> Expect.equal ( stubColumnName, Asc )
-            , fuzz2 (sortModelFuzz stubColumnName Asc) columnNameFuzz "test sorting on table when applying a column to sort with Asc order" <|
-                \m c -> updateWithEffect (sortColumn c) m |> model |> getSort |> Expect.equal ( c, Asc )
-            , fuzz2 (sortModelFuzz stubColumnName Asc) dataFuzzer "test getRows on table that was sorted with Asc order" <|
-                \m data ->
-                    m
-                        |> updateData data
-                        |> updateWithEffect (sortColumn stubColumnName)
-                        |> model
+        , describe "sort" <|
+            let
+                modelWithSelectedColumn : SortOrder -> Fuzzer ( ColumnName, Model )
+                modelWithSelectedColumn sortOrder =
+                    columnFuzz
+                        |> Fuzz.andThen
+                            (\col ->
+                                Fuzz.pair
+                                    (Fuzz.constant col.name)
+                                    (sortModelFuzz (Fuzz.constant (NonEmptyList.singleton col)) col.name sortOrder)
+                            )
+            in
+            [ fuzz (modelWithSelectedColumn Asc) "should sort column with Desc when toggling already sorted column with Asc" <|
+                \( col, m ) ->
+                    updateWithEffect (sortColumn col) m
+                        |> getModel
+                        |> getSort
+                        |> Expect.equal ( col, Desc )
+            , fuzz (modelWithSelectedColumn Desc) "test sorting on table when toggling already sorted column with Desc" <|
+                \( col, m ) ->
+                    updateWithEffect (sortColumn col) m
+                        |> getModel
+                        |> getSort
+                        |> Expect.equal ( col, Asc )
+            , let
+                hasNoDuplicate ( first, others ) =
+                    others |> NonEmptyList.member first |> not
+
+                testcase sortOrder =
+                    Fuzz.pair columnFuzz (nonEmptyListFuzzer columnFuzz |> Fuzz.map NonEmptyList.uniq)
+                        |> Fuzz.filter hasNoDuplicate
+                        |> Fuzz.andThen
+                            (\( first, others ) ->
+                                NonEmptyList.cons first others
+                                    |> shuffledNonEmptyList
+                                    |> Fuzz.andThen
+                                        (\shuffled ->
+                                            sortModelFuzz (Fuzz.constant shuffled) first.name sortOrder
+                                                |> Fuzz.map
+                                                    (\model ->
+                                                        { newSortedColumn = NonEmptyList.head others |> .name
+                                                        , shuffled = shuffled |> NonEmptyList.map .name
+                                                        , model = model
+                                                        }
+                                                    )
+                                        )
+                            )
+              in
+              fuzz (testcase Asc) "should sort by a given column when applying another column to sort with Asc order" <|
+                \{ newSortedColumn, shuffled, model } ->
+                    updateWithEffect (sortColumn newSortedColumn) model
+                        |> getModel
+                        |> Expect.all
+                            [ getSort >> Expect.equal ( newSortedColumn, Asc )
+                            , getRows >> eachElementIsSmallerThanNext
+                            ]
+            , let
+                testcase sortOrder =
+                    (nonEmptyListFuzzer columnFuzz |> Fuzz.map NonEmptyList.uniq)
+                        |> Fuzz.andThen
+                            (\columns ->
+                                columns
+                                    |> shuffledNonEmptyList
+                                    |> Fuzz.andThen
+                                        (\shuffled ->
+                                            sortModelFuzz (Fuzz.constant shuffled) (NonEmptyList.head columns |> .name) sortOrder
+                                                |> Fuzz.map
+                                                    (\model ->
+                                                        { sortedColumn = NonEmptyList.head columns |> .name
+                                                        , shuffled = shuffled |> NonEmptyList.map .name
+                                                        , model = model
+                                                        }
+                                                    )
+                                        )
+                            )
+              in
+              fuzz (testcase Asc) "test getRows on table that was sorted with Asc order" <|
+                \{ sortedColumn, shuffled, model } ->
+                    model
+                        |> updateWithEffect (sortColumn sortedColumn)
+                        |> getModel
                         |> getRows
-                        |> Expect.equalLists (List.reverse (List.sort data))
+                        |> eachElementIsGreaterThanNext
             ]
         , describe "csv export"
             [ fuzz (nonEmptyListFuzzer columnFuzz) "test csv export on empty table that does not define a csv export configuration" <|
@@ -283,3 +389,30 @@ suite =
                         |> Expect.equal [ DownloadTableAsCsv (CsvExportData "yetAnotherFile" "\"\"\"Name\"\"\",\"Age,probably\"\u{000D}\n\"\"\"Al\"\"ice\"\"\",45\u{000D}\n\"Bo,b\",37\u{000D}\n\"\nEve\",28") ]
             ]
         ]
+
+
+eachElementIsGreaterThanNext : List comparable -> Expect.Expectation
+eachElementIsGreaterThanNext =
+    checkEachElementWithNext (>=)
+
+
+eachElementIsSmallerThanNext : List comparable -> Expect.Expectation
+eachElementIsSmallerThanNext =
+    checkEachElementWithNext (<=)
+
+
+checkEachElementWithNext : (b -> b -> Bool) -> List b -> Expect.Expectation
+checkEachElementWithNext comparator list =
+    case
+        List.tail list
+            |> Maybe.map (List.Extra.zip list)
+            |> Maybe.map (List.all (\( a, b ) -> comparator a b))
+    of
+        Just True ->
+            Expect.pass
+
+        Nothing ->
+            Expect.pass
+
+        Just False ->
+            Expect.fail "elements are not sorted"
