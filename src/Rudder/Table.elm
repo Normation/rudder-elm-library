@@ -317,11 +317,8 @@ To use it, the builder DSL heavily uses the flow syntax, take this example :
             (Column (ColumnName "id") (\{ id } -> text id) Nothing (Ordering.byField .id))
             [ Column (ColumnName "name") (\{ name } -> span [ class "name" ] [ text name ]) Nothing (Ordering.byField .name) ]
 
-    filterByFields =
-        filterByValues (\{ id, name } -> [ id, name ])
-
     config =
-        buildConfig.newConfig cols filterByFields
+        buildConfig.newConfig cols
             |> buildConfig.withSortBy (ColumnName "id")
             |> buildConfig.withSortOrder Desc
             |> buildConfig.withOptions
