@@ -35,6 +35,11 @@ To install :
 * add `npm run elm-git-install` to your build script
 
 
+## Element customization
+
+By default, elements created with this library are stylized using bootstrap classes and font-awesome icons. However, many of the components (table header, footer, columns, buttons...) can be customized with user-defined classes (see `Table.Customizations`, `Table.RefreshButtonOptions`, `Table.CsvExportOptions`, and `Table.FilterOptions`)
+
+
 ## Caveats
 
 * Elm dependency management is not automatic when installing this library, it will require dependencies of modules that are imported to be installed
