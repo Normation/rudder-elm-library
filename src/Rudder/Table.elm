@@ -7,7 +7,8 @@ module Rudder.Table exposing
     , StorageOptions, StorageOptionsConfig, StorageKey
     , Customizations, CustomizationsBuilder, buildCustomizations
     , CsvExportData
-    , CsvExportConfig, CsvExportOptions
+    , CsvExportType(..)
+    , CsvExportConfig, CsvExportHtmlConfig, CsvExportOptions
     , FooterOptions
     , updateData, updateFilter, updateDataWithFilter
     , updateExportToCsv
@@ -44,7 +45,8 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 @docs StorageOptions, StorageOptionsConfig, StorageKey
 @docs Customizations, CustomizationsBuilder, buildCustomizations
 @docs CsvExportData
-@docs CsvExportConfig, CsvExportOptions
+@docs CsvExportType
+@docs CsvExportConfig, CsvExportHtmlConfig, CsvExportOptions
 @docs FooterOptions
 
 
@@ -74,8 +76,8 @@ It has a TEA approach, so it should be used with the [Nested TEA][nested-tea] ar
 
 import Csv.Encode
 import File.Download
-import Html exposing (Attribute, Html, b, button, div, i, input, span, table, tbody, td, text, tfoot, th, thead, tr)
-import Html.Attributes exposing (attribute, class, colspan, id, placeholder, rowspan, style, tabindex, type_, value)
+import Html exposing (Attribute, Html, b, button, div, i, input, li, span, table, tbody, td, text, tfoot, th, thead, tr, ul)
+import Html.Attributes exposing (attribute, class, colspan, id, placeholder, rowspan, style, type_, value)
 import Html.Events exposing (onClick, onInput)
 import Json.Decode exposing (Value)
 import Json.Encode as Encode
@@ -176,16 +178,25 @@ type alias StorageOptionsConfig msg =
     }
 
 
-{-| CSV export configuration
+{-| CSV export configuration for the 'default' dropdown export button
 -}
-type alias CsvExportConfig row parentMsg =
-    { entryToStringList : row -> List String, btnAttributes : List (Attribute (Msg parentMsg)) }
+type alias CsvExportConfig row =
+    { entryToStringList : row -> List String }
+
+
+{-| CSV export configuration for a customizable html button
+-}
+type alias CsvExportHtmlConfig row parentMsg =
+    { entryToStringList : row -> List String
+    , html : Html parentMsg
+    }
 
 
 {-| Options for CSV export support of a given table
 -}
 type CsvExportOptions row msg
-    = CsvExportButton (CsvExportConfig row msg)
+    = CsvExportDropdownButton (CsvExportConfig row) -- default dropdown button with an option for both export types
+    | CsvExportHtml (CsvExportHtmlConfig row msg) -- customizable html
     | NoCsvExportButton
 
 
@@ -269,6 +280,17 @@ type Model row msg
         }
 
 
+{-| When exporting a table to CSV, it is possible to export either:
+
+  - all the rows of the table (ExportAll), or
+  - only the rows that match the currently applied filters (ExportFiltered)
+
+-}
+type CsvExportType
+    = ExportAll
+    | ExportFiltered
+
+
 {-| The internal message which is handled internally and which can be used to execute messages from parent that were
 passed in the configuration
 -}
@@ -277,8 +299,8 @@ type Msg parentMsg
     | RefreshMsg
     | FilterInputChanged String
     | UpdateFilterMsg SearchFilterState
-    | ExportCsvRequest
-    | ExportCsvMsg String
+    | ExportCsvRequest CsvExportType
+    | ExportCsvMsg CsvExportType String
     | ParentMsg parentMsg
     | EmptyMsg
 
@@ -288,7 +310,7 @@ type Msg parentMsg
 type OutMsg parentMsg
     = RefreshRequested
     | OnHtml parentMsg
-    | CsvExportRequested
+    | CsvExportRequested CsvExportType
 
 
 {-| A representation of concrete effects in the type system to allow testing
@@ -344,7 +366,8 @@ type alias OptionsBuilder row msg =
     , withRefresh : List (Attribute (Msg msg)) -> Options row msg -> Options row msg
     , withStorage : StorageOptionsConfig msg -> Options row msg -> Options row msg
     , withFilter : FilterOptionsType row msg -> Options row msg -> Options row msg
-    , withCsvExport : CsvExportConfig row msg -> Options row msg -> Options row msg
+    , withCsvExport : CsvExportConfig row -> Options row msg -> Options row msg
+    , withCsvExportHtml : CsvExportHtmlConfig row msg -> Options row msg -> Options row msg
     , withFooter : Options row msg -> Options row msg
     }
 
@@ -385,7 +408,8 @@ buildOptions =
     , withRefresh = \opt -> \state -> { state | refresh = RefreshButtonOptions opt }
     , withStorage = \opt -> \state -> { state | storage = StorageOptions opt }
     , withFilter = \opt -> \state -> { state | filter = FilterOptions opt }
-    , withCsvExport = \opt -> \state -> { state | csvExport = CsvExportButton opt }
+    , withCsvExport = \opt -> \state -> { state | csvExport = CsvExportDropdownButton opt }
+    , withCsvExportHtml = \opt -> \state -> { state | csvExport = CsvExportHtml opt }
     , withFooter = \state -> { state | footer = Footer }
     }
 
@@ -533,13 +557,13 @@ interpret =
         >> Cmd.batch
 
 
-{-| Update function to call in order to send the an "Export to CSV" Msg from the parent component
+{-| Update function to call in order to send the an "Export data to CSV" Msg from the parent component
 -}
-updateExportToCsv : Model row msg -> String -> ( Model row msg, Cmd msg, Maybe (OutMsg msg) )
-updateExportToCsv model filename =
+updateExportToCsv : Model row msg -> CsvExportType -> String -> ( Model row msg, Cmd msg, Maybe (OutMsg msg) )
+updateExportToCsv model csvExportType filename =
     let
         ( updatedModel, effect, outMsg ) =
-            updateWithEffect (ExportCsvMsg filename) model
+            updateWithEffect (ExportCsvMsg csvExportType filename) model
     in
     ( updatedModel, interpret effect, outMsg )
 
@@ -571,13 +595,16 @@ updateWithEffect msg (Model model) =
             in
             ( newModel, effects, Nothing )
 
-        ExportCsvRequest ->
-            ( Model model, [], Just CsvExportRequested )
+        ExportCsvRequest csvExportType ->
+            ( Model model, [], Just (CsvExportRequested csvExportType) )
 
-        ExportCsvMsg filename ->
+        ExportCsvMsg csvExportType filename ->
             case model.options.csvExport of
-                CsvExportButton csvExportConfig ->
-                    ( Model model, [ DownloadTableAsCsv (tableToCsv (Model model) csvExportConfig filename) ], Nothing )
+                CsvExportDropdownButton csvExportConfig ->
+                    ( Model model, [ tableToCsv (Model model) csvExportConfig csvExportType filename |> DownloadTableAsCsv ], Nothing )
+
+                CsvExportHtml csvExportHtmlConfig ->
+                    ( Model model, [ tableToCsv (Model model) csvExportHtmlConfig csvExportType filename |> DownloadTableAsCsv ], Nothing )
 
                 NoCsvExportButton ->
                     ( Model model, [ IgnoreExportCsvMsgNoConfig ], Nothing )
@@ -683,7 +710,7 @@ updateFilter =
 
 {-| Internal Msg that produces the CSV export event; used in tests
 -}
-exportCsv : String -> Msg msg
+exportCsv : CsvExportType -> String -> Msg msg
 exportCsv =
     ExportCsvMsg
 
@@ -774,22 +801,34 @@ storageValueTypeText valueType =
 {- CSV EXPORT -}
 
 
-{-| Table to CSV export function
+{-| Data to CSV export function
 -}
-tableToCsv : Model row msg -> CsvExportConfig row msg -> String -> CsvExportData
-tableToCsv (Model model) { entryToStringList } filename =
+tableToCsv : Model row msg -> { config | entryToStringList : row -> List String } -> CsvExportType -> String -> CsvExportData
+tableToCsv (Model model) { entryToStringList } csvExportType filename =
+    case csvExportType of
+        ExportAll ->
+            dataToCsv model.columns model.initialData entryToStringList filename
+
+        ExportFiltered ->
+            dataToCsv model.columns model.data entryToStringList filename
+
+
+{-| Data to CSV export function
+-}
+dataToCsv : NonEmptyList.Nonempty (Column row msg) -> List row -> (row -> List String) -> String -> CsvExportData
+dataToCsv tableColumns tableData entryToStringList filename =
     let
         -- first row contains column names
         columns : List String
         columns =
-            model.columns
+            tableColumns
                 |> NonEmptyList.toList
                 |> List.map (\c -> c.name)
                 |> List.map (\(ColumnName c) -> c)
 
         data : List (List String)
         data =
-            model.data |> List.map entryToStringList
+            tableData |> List.map entryToStringList
     in
     data
         |> Csv.Encode.encode
@@ -943,22 +982,41 @@ viewCsvExportButton options =
         NoCsvExportButton ->
             text ""
 
-        CsvExportButton { btnAttributes } ->
-            button
-                ([ class "btn btn-primary"
-                 , attribute "aria-label" "Export CSV"
-                 , tabindex 0
-                 , type_ "button"
-                 , onClick ExportCsvRequest
-                 ]
-                    ++ btnAttributes
-                )
-                [ span []
-                    [ text "Export"
-                    , text " "
-                    , i [ class "fa fa-table" ] []
+        CsvExportDropdownButton _ ->
+            div
+                [ class "btn-group" ]
+                [ button
+                    [ attribute "data-bs-toggle" "dropdown"
+                    , attribute "aria-label" "Export CSV"
+                    , attribute "aria-expanded" "false"
+                    , class "btn btn-primary export-dropdown-toggle dropdown-toggle"
+                    ]
+                    [ span [ class "me-2 fa fa-file-download" ] []
+                    , span [ class "me-2" ] [ text "Export CSV" ]
+                    ]
+                , ul
+                    [ class "dropdown-menu" ]
+                    [ li []
+                        [ button
+                            [ class "dropdown-item"
+                            , onClick (ExportCsvRequest ExportAll)
+                            ]
+                            [ span [] [ text "All entries" ]
+                            ]
+                        ]
+                    , li []
+                        [ button
+                            [ class "dropdown-item"
+                            , onClick (ExportCsvRequest ExportFiltered)
+                            ]
+                            [ span [] [ text "Filtered entries only" ]
+                            ]
+                        ]
                     ]
                 ]
+
+        CsvExportHtml { html } ->
+            Html.map ParentMsg html
 
 
 viewFooter : Int -> Int -> Int -> Options row msg -> List (Html (Msg msg))
